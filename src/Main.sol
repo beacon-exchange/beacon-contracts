@@ -47,8 +47,11 @@ contract Main {
   struct DestinationToken {
     // Amount on deposit for this particular market.
     mapping(address/*User*/ => EscrowBalance) escrow_balances;
+
     // Map from user to latest withdraw
-    mapping(address/*User*/ => uint256/*timestamp*/ => Withdraw) withdraws;
+    mapping(address/*User*/ =>
+            mapping(uint256/*timestamp*/ => Withdraw)
+           ) withdraws;
   }
 
   struct BaseToken {
@@ -108,7 +111,7 @@ contract Main {
     require(tok.transfer(msg.sender, amount), "withdraw failed: transfer");
   }
 
-  lookup_withdraw(ERC20 base, ERC20 dst, address sender, uint256 timestamp)
+  function lookup_withdraw(ERC20 base, ERC20 dst, address sender, uint256 timestamp)
     private
     returns (Withdraw storage)
   {
@@ -142,7 +145,13 @@ contract Main {
     uint256 amt = w.withdraw_amount;
     // can use unsafe math?
     dpst.deposit_balance = dpst.deposit_balance.add(amt);
-    delete w; // clear storage
+
+    // clear storage
+    //delete w; <-- does not compile
+    delete entry[address(base)]
+      .markets[address(dst)]
+      .withdraws[msg.sender][timestamp];
+
     return amt;
   }
 
