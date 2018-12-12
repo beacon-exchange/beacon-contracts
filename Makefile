@@ -1,6 +1,6 @@
 .PHONY: test clean all asm
 
-sources := $(lib/*.sol src/*.sol)
+sources := $(templates/*.sol src/*.hs stack.yaml package.yaml)
 main := src/Main.sol
 
 all: bins
@@ -11,8 +11,14 @@ clean:
 asm:
 	solc --asm --allow-paths . $(main)
 
-bin/Main.bin: $(sources)
-	mkdir -p bin
-	solc -o bin/ --optimize --bin --allow-paths . $(main)
+codegen: $(patsubst templates/%.sol,artifacts/sol/%.sol, templates/*.sol)
+	mkdir -p artifacts/sol
+	stack build
+	stack exec codegen
+
+# TODO fix dep
+bin/Main.bin: codegen
+	mkdir -p artifacts/bin
+	solc -o artifacts/bin/ --optimize --bin --allow-paths artifacts/sol/ artifacts/sol/Main.sol
 
 bins: bin/Main.bin

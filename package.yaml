@@ -1,0 +1,39 @@
+name: hll
+version: '0.0.0'
+synopsis: Beacon contracts HLL
+copyright: 2018 Beacon Exchange
+license: AllRightsReserved
+homepage: https://github.com/beacon-exchange/contracts
+git: https://github.com/beacon-exchange/contracts
+ghc-options:
+- -threaded
+- -rtsopts
+- -with-rtsopts=-N
+- -freverse-errors
+- -W
+- -Wall
+- -Wcompat
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wredundant-constraints
+- -fwarn-missing-fields
+- -Werror
+default-extensions:
+- ScopedTypeVariables
+- OverloadedStrings
+- QuasiQuotes
+- TemplateHaskell
+- DeriveGeneric
+- GeneralizedNewtypeDeriving
+- NoImplicitPrelude
+dependencies:
+- base
+- rio
+- heterocephalus
+- blaze-markup
+executables:
+  codegen:
+    main: Main.hs
+    #dependencies: []
+    source-dirs:
+    - src

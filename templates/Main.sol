@@ -3,7 +3,7 @@
 // Not audited. Correctness may vary.
 pragma solidity ^0.5.1;
 pragma experimental ABIEncoderV2;
-import 'lib/SafeMath.sol';
+import './SafeMath.sol';
 
 // No way to subclass, e.g. newtypes like interface BaseToken extends ERC20
 interface ERC20 {
@@ -223,7 +223,7 @@ contract Main {
     bytes32 itt_digest =
     */
 
-    assert(false)
+    assert(false);
   }
      
   function challenge() external {
