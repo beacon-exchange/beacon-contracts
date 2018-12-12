@@ -2,6 +2,7 @@
 // Not optimized for code size, gas, or anything really.
 // Not audited. Correctness may vary.
 pragma solidity ^0.5.1;
+pragma experimental ABIEncoderV2;
 import 'lib/SafeMath.sol';
 
 // No way to subclass, e.g. newtypes like interface BaseToken extends ERC20
@@ -19,7 +20,7 @@ interface ERC20 {
 contract Main {
   using SafeMath for uint256;
 
-  uint256 constant LOCKUP_PERIOD = 600; // 10 minutes
+  uint256 constant LOCKUP_PERIOD_SECONDS = 600; // 10 minutes
 
   // can't actually use these newtypes as map keys
   // so they are not really used
@@ -29,6 +30,42 @@ contract Main {
   struct TokenAddress {
     address addr;
   }
+
+  struct EIP712Domain {
+    string name;
+    string version;
+    //uint256 chainId;
+  }
+  function eip712domain() public pure returns (EIP712Domain memory) {
+    return EIP712Domain({
+      name: "Beacon Exchange Protocol",
+      version: "v0.0.0"
+    });
+  }
+
+  /*** Off-chain structs ***/
+  struct ITT {
+    address BEACON_CONTRACT;
+    address base;
+    address dst;
+    address sender; // need this or is it inferrable?
+    uint256 amount;
+    uint256 forfeiture_fee;
+    uint256 challenge_period_seconds;
+    //bool partial_fills;
+    bytes32 nonce;
+  }
+
+  struct POI {
+    address BEACON_CONTRACT;
+    address itt_base;
+    address itt_dst;
+    //uint256 amount; // assume no partial fills for now.
+    bytes32 itt_hash;
+    bytes32 nonce;
+  }
+
+  /*** Contract data structures ***/
 
   // deposit is easy to withdraw
   struct DepositBalance {
@@ -89,6 +126,7 @@ contract Main {
     // approval in separate step
     require(tok.transferFrom(msg.sender, address(this), amount),
            "deposit failed: transferFrom");
+    // TODO LOG
   }
 
   // Deposit tokens into a specific market.
@@ -101,6 +139,7 @@ contract Main {
 
     EscrowBalance storage escr = escrow_balance(base,dst,msg.sender);
     escr.escrow_balance = escr.escrow_balance.add(amount);
+    //TODO LOG
   }
 
   function withdraw(ERC20 tok, uint256 amount)
@@ -109,6 +148,7 @@ contract Main {
     DepositBalance storage dpst = deposit_balance(tok, msg.sender);
     dpst.deposit_balance = dpst.deposit_balance.sub(amount);
     require(tok.transfer(msg.sender, amount), "withdraw failed: transfer");
+    //TODO LOG
   }
 
   function lookup_withdraw(ERC20 base, ERC20 dst, address sender, uint256 timestamp)
@@ -129,6 +169,7 @@ contract Main {
 
     Withdraw storage w = lookup_withdraw(base, dst, msg.sender, block.timestamp);
     w.withdraw_amount = w.withdraw_amount.add(amount);
+    // TODO LOG
   }
 
 
@@ -136,7 +177,7 @@ contract Main {
     external
     returns (uint amount)
   {
-    require(timestamp + LOCKUP_PERIOD < block.timestamp,
+    require(timestamp + LOCKUP_PERIOD_SECONDS < block.timestamp,
            "withdrawal lockup period has not expired yet.");
 
     Withdraw storage w = lookup_withdraw(base, dst, msg.sender, timestamp);
@@ -152,11 +193,37 @@ contract Main {
       .markets[address(dst)]
       .withdraws[msg.sender][timestamp];
 
+    // TODO LOG
     return amt;
   }
 
-  function fill() external {
-    assert(false);
+  // Passing structs via calldata fails solc with unimplemented error
+  // function fill(ITT calldata itt, POI calldata poi/*, sigs*/)
+  function fill(
+    /*
+    address itt_BEACON_CONTRACT,
+    address itt_base,
+    address itt_dst,
+    address itt_sender,
+    uint256 itt_amount,
+    uint256 itt_forfeiture_fee,
+    uint256 itt_challenge_period_seconds,
+    bytes32 itt_nonce,
+    address poi_BEACON_CONTRACT,
+    address poi_itt_base,
+    address poi_itt_dst,
+    bytes32 poi_itt_hash,
+    bytes32 poi_nonce*/)
+    public
+  {
+    /*
+    // TODO VERIFY SIGS
+    require(address(this) == itt_BEACON_CONTRACT, "Wrong ITT contract");
+    require(address(this) == poi_BEACON_CONTRACT, "Wrong POI contract");
+    bytes32 itt_digest =
+    */
+
+    assert(false)
   }
      
   function challenge() external {
