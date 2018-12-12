@@ -109,7 +109,7 @@ contract Main {
   {
     return entry[address(base)]
       .markets[address(dst)]
-      .escrow_balances[msg.sender];
+      .escrow_balances[sender];
   }
 
   function deposit_balance(ERC20 base, address sender)

@@ -19,6 +19,6 @@ codegen: $(patsubst templates/%.sol,artifacts/sol/%.sol, templates/*.sol)
 # TODO fix dep
 bin/Main.bin: codegen
 	mkdir -p artifacts/bin
-	solc -o artifacts/bin/ --optimize --bin --allow-paths artifacts/sol/ artifacts/sol/Main.sol
+	solc --overwrite -o artifacts/bin/ --optimize --bin --allow-paths artifacts/sol/ artifacts/sol/Main.sol
 
 bins: bin/Main.bin
