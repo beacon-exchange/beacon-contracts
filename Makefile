@@ -6,12 +6,12 @@ main := src/Main.sol
 all: bins
 
 clean:
-	rm -r bin/*
+	rm -r artifacts/*
 
 asm:
 	solc --asm --allow-paths . $(main)
 
-codegen: $(patsubst templates/%.sol,artifacts/sol/%.sol, templates/*.sol)
+codegen: $(sources)
 	mkdir -p artifacts/sol
 	stack build
 	stack exec codegen

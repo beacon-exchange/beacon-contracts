@@ -2,7 +2,7 @@
 // Not optimized for code size, gas, or anything really.
 // Not audited. Correctness may vary.
 pragma solidity ^0.5.1;
-pragma experimental ABIEncoderV2;
+// pragma experimental ABIEncoderV2;
 import './SafeMath.sol';
 
 // No way to subclass, e.g. newtypes like interface BaseToken extends ERC20
@@ -31,39 +31,19 @@ contract Main {
     address addr;
   }
 
+
   struct EIP712Domain {
     string name;
     string version;
     //uint256 chainId;
   }
-  function eip712domain() public pure returns (EIP712Domain memory) {
-    return EIP712Domain({
-      name: "Beacon Exchange Protocol",
-      version: "v0.0.0"
-    });
-  }
 
   /*** Off-chain structs ***/
-  struct ITT {
-    address BEACON_CONTRACT;
-    address base;
-    address dst;
-    address sender; // need this or is it inferrable?
-    uint256 amount;
-    uint256 forfeiture_fee;
-    uint256 challenge_period_seconds;
-    //bool partial_fills;
-    bytes32 nonce;
-  }
+  ${def_struct ittTy}
+  string constant itt_eip712name = ${ref_eip712StructRepLiteral ittTy};
 
-  struct POI {
-    address BEACON_CONTRACT;
-    address itt_base;
-    address itt_dst;
-    //uint256 amount; // assume no partial fills for now.
-    bytes32 itt_hash;
-    bytes32 nonce;
-  }
+  ${def_struct poiTy}
+  string constant poi_eip712name = ${ref_eip712StructRepLiteral poiTy};
 
   /*** Contract data structures ***/
 
@@ -95,7 +75,15 @@ contract Main {
     mapping(address/*Token*/ => DestinationToken) markets;
     mapping(address/*User*/ => DepositBalance) balances;
   }
+
+  // entry point to all data
+  // TODO better name
   mapping(address => BaseToken) entry;
+
+  EIP712Domain /*constant*/ eip712Domain = EIP712Domain({
+      name: "Beacon Exchange Protocol",
+      version: "v0.0.0"
+    });
 
   //mapping(bytes32 => Withdraw) all_withdraws;
 
@@ -104,7 +92,7 @@ contract Main {
   }
 
   function escrow_balance(ERC20 base, ERC20 dst, address sender)
-    private
+    private view // calculating the key should be pure
     returns (EscrowBalance storage)
   {
     return entry[address(base)]
@@ -113,7 +101,7 @@ contract Main {
   }
 
   function deposit_balance(ERC20 base, address sender)
-    private
+    private view
     returns (DepositBalance storage)
   {
     return entry[address(base)].balances[sender];
@@ -152,7 +140,7 @@ contract Main {
   }
 
   function lookup_withdraw(ERC20 base, ERC20 dst, address sender, uint256 timestamp)
-    private
+    private view
     returns (Withdraw storage)
   {
     return
@@ -200,41 +188,33 @@ contract Main {
   // Passing structs via calldata fails solc with unimplemented error
   // function fill(ITT calldata itt, POI calldata poi/*, sigs*/)
   function fill(
-    /*
-    address itt_BEACON_CONTRACT,
-    address itt_base,
-    address itt_dst,
-    address itt_sender,
-    uint256 itt_amount,
-    uint256 itt_forfeiture_fee,
-    uint256 itt_challenge_period_seconds,
-    bytes32 itt_nonce,
-    address poi_BEACON_CONTRACT,
-    address poi_itt_base,
-    address poi_itt_dst,
-    bytes32 poi_itt_hash,
-    bytes32 poi_nonce*/)
+    ${funargs_struct "itt" ittTy},
+    ${funargs_struct "poi" poiTy}
+    )
     public
   {
-    /*
     // TODO VERIFY SIGS
-    require(address(this) == itt_BEACON_CONTRACT, "Wrong ITT contract");
-    require(address(this) == poi_BEACON_CONTRACT, "Wrong POI contract");
-    bytes32 itt_digest =
-    */
+    require(address(this) == __itt_BEACON_CONTRACT, "Wrong ITT contract");
+    require(address(this) == __poi_BEACON_CONTRACT, "Wrong POI contract");
 
-    assert(false);
+    bytes32 itt_digest = ${ref_hashstruct "itt" ittTy}
+    require(itt_digest == ${ref_struct_member "poi" "itt_hash"},
+           "ITT hash does not match");
+    //require
   }
      
+  /*
   function challenge() external {
     assert(false);
-  }
+  }*/
      
+  /*
   function cancel() external {
     assert(false);
-  }
-     
+  }*/
+
+  /*
   function accept() external {
     assert(false);
-  }
+  }*/
 }

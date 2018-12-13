@@ -26,11 +26,14 @@ default-extensions:
 - DeriveGeneric
 - GeneralizedNewtypeDeriving
 - NoImplicitPrelude
+- TupleSections
 dependencies:
 - base
 - rio
+# text facilities
 - heterocephalus
 - blaze-markup
+- template-haskell
 executables:
   codegen:
     main: Main.hs
