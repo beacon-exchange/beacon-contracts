@@ -13,7 +13,7 @@ eip712DomainTy = Sol.struct "EIP712Domain"
 
 ittTy :: Sol.Struct
 ittTy = Sol.struct "ITT" -- TODO annotation
-  [ bytes32 "BEACON_CONTRACT"
+  [ address "BEACON_CONTRACT"
   , address "base"
   , address "dst"
   , address "sender" -- is this always inferrable from context/sig?
@@ -25,7 +25,7 @@ ittTy = Sol.struct "ITT" -- TODO annotation
 
 poiTy :: Sol.Struct
 poiTy = Sol.struct "POI" -- TODO annotation
-  [ bytes32 "BEACON_CONTRACT"
+  [ address "BEACON_CONTRACT"
   , address "itt_base"
   , address "itt_dst"
   -- uint256 amount; // assume no partial fills for now.
