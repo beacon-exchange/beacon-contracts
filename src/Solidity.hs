@@ -86,9 +86,11 @@ def_struct (Struct name membs annot) = [sol|
 enumerateDesc :: [a] -> [(Int, a)]
 enumerateDesc xs = reverse $ zip [0..] (reverse xs)
 
+{-
 -- Is there a prelude function for this
 enumerate :: [a] -> [(Int, a)]
 enumerate xs = zip [0..] xs
+-}
 
 -- `encodeType`
 -- Nested structs not supported yet
@@ -140,13 +142,11 @@ unpack_struct :: Struct -> Name -> Name -> Markup
 unpack_struct (Struct _ members _) srcVar dstVar = [sol|
   // HLL CODEGEN: unpack ${srcVar} into ${dstVar}
   assembly {
-  %{forall (ix, (_nm, _ty)) <- xs}
-    mstore(add(${dstVar}, ${ix}), calldataload(add(${srcVar}, ${ix})))
-  %{endforall}
+    calldatacopy(${dstVar}, ${srcVar}, ${len})
   }
   |]
   where
-    xs = map (first (*32)) $ enumerate members
+    len = WORD_SIZE * length members
 
 -- In places where we can't create a struct, just unpack the values.
 ref_struct_member :: Name -> Name -> Name

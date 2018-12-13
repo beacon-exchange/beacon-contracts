@@ -205,9 +205,8 @@ contract Main {
     external
   {
     ITT memory itt;
-    // Optimization opportunity:
-    // technically we don't need every single field in itt and poi.
     ${unpack_struct ittTy "ittBytes" "itt"}
+
     POI memory poi;
     ${unpack_struct poiTy "poiBytes" "poi"}
 
