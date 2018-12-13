@@ -28,6 +28,7 @@ poiTy = Sol.struct "POI" -- TODO annotation
   [ address "BEACON_CONTRACT"
   , address "itt_base"
   , address "itt_dst"
+  , address "sender"
   -- uint256 amount; // assume no partial fills for now.
   , bytes32 "itt_hash"
   , bytes32 "nonce"

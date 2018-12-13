@@ -4,6 +4,7 @@
 pragma solidity ^0.5.1;
 // pragma experimental ABIEncoderV2;
 import './SafeMath.sol';
+import './ECVerify.sol';
 
 // No way to subclass, e.g. newtypes like interface BaseToken extends ERC20
 interface ERC20 {
@@ -33,6 +34,7 @@ contract Main {
 
   ${def_struct eip712DomainTy}
 
+  // should be a constant
   function eip712DomainSeparator() public view returns (bytes32) {
     string memory ${ref_struct_member "eip712Domain" "name"} =
       "Beacon Exchange";
@@ -196,8 +198,8 @@ contract Main {
   function exchange(
     bytes32[${length (_members ittTy)}] calldata ittBytes,
     bytes32[${length (_members poiTy)}] calldata poiBytes,
-    byte[65] calldata itt_sig,
-    byte[65] calldata poi_sig
+    bytes calldata itt_sig,
+    bytes calldata poi_sig
     )
     external
   {
@@ -206,7 +208,7 @@ contract Main {
     POI memory poi;
     ${unpack_struct poiTy "poiBytes" "poi"}
 
-    // TODO VERIFY SIGS
+    // check based on domain separator?
     require(address(this) == itt.BEACON_CONTRACT,
             "Wrong ITT contract");
     require(address(this) == poi.BEACON_CONTRACT,
@@ -215,8 +217,25 @@ contract Main {
     bytes32 itt_digest = ${ref_eip712HashStruct "itt" ittTy};
     require(itt_digest == poi.itt_hash,
            "ITT hash does not match");
+
+    require(ECVerify.ecverify(eip712encode(itt_digest), itt_sig) == itt.sender);
+
+    bytes32 poi_digest = ${ref_eip712HashStruct "poi" poiTy};
+    require(ECVerify.ecverify(eip712encode(poi_digest), poi_sig) == poi.sender);
   }
-     
+
+  // EIP712 encoding
+  function eip712encode(bytes32 structDigest)
+    private
+    view
+    returns (bytes32)
+  {
+    return keccak256(abi.encodePacked(
+      "\x19\x01",
+      eip712DomainSeparator(),
+      structDigest));
+  }
+
   /*
   function challenge() external {
     assert(false);
