@@ -198,8 +198,8 @@ contract Main {
   function exchange(
     bytes32[${length (_members ittTy)}] calldata ittBytes,
     bytes32[${length (_members poiTy)}] calldata poiBytes,
-    bytes calldata itt_sig,
-    bytes calldata poi_sig
+    bytes calldata mkr_sig,
+    bytes calldata tkr_sig
     )
     external
   {
@@ -220,10 +220,14 @@ contract Main {
     require(itt_digest == poi.itt_hash,
            "ITT hash does not match");
 
-    require(ECVerify.ecverify(eip712encode(itt_digest), itt_sig) == itt.sender);
-
     bytes32 poi_digest = ${ref_eip712HashStruct "poi" poiTy};
-    require(ECVerify.ecverify(eip712encode(poi_digest), poi_sig) == poi.sender);
+
+    // require maker signature for POI hash
+    // (sig for ITT hash not required since POI references the ITT)
+    require(ECVerify.ecverify(eip712encode(poi_digest), mkr_sig) == itt.sender);
+
+    // require taker signature for POI hash
+    require(ECVerify.ecverify(eip712encode(poi_digest), tkr_sig) == poi.sender);
 
     // DepositBalance storage base = deposit_balance(itt.base, itt.sender);
     // DepositBalance storage dst = deposit_balance(itt.dst, poi.sender);
