@@ -4,6 +4,13 @@ import RIO
 
 import Solidity as Sol
 
+eip712DomainTy :: Sol.Struct
+eip712DomainTy = Sol.struct "EIP712Domain"
+  [ string "name"
+  , string "version"
+  -- TODO add verifyingContract
+  ]
+
 ittTy :: Sol.Struct
 ittTy = Sol.struct "ITT" -- TODO annotation
   [ address "BEACON_CONTRACT"

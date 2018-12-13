@@ -32,11 +32,18 @@ contract Main {
   }
 
 
-  struct EIP712Domain {
-    string name;
-    string version;
-    //uint256 chainId;
-  }
+  ${def_struct eip712DomainTy}
+
+  string constant ${ref_struct_member "eip712Domain" "name"} =
+    "Beacon Exchange";
+  string constant ${ref_struct_member "eip712Domain" "version"} =
+    "v0.0.0";
+
+  bytes32 constant eip712DomainSeparator = keccak256(abi.encode(
+    keccak256(bytes(${ref_eip712StructRepLiteral eip712DomainTy})), // TYPEHASH
+    keccak256(bytes(${ref_struct_member "eip712Domain" "name"})),
+    keccak256(bytes(${ref_struct_member "eip712Domain" "version"}))
+  ));
 
   /*** Off-chain structs ***/
   ${def_struct ittTy}
@@ -79,11 +86,6 @@ contract Main {
   // entry point to all data
   // TODO better name
   mapping(address => BaseToken) entry;
-
-  EIP712Domain /*constant*/ eip712Domain = EIP712Domain({
-      name: "Beacon Exchange Protocol",
-      version: "v0.0.0"
-    });
 
   //mapping(bytes32 => Withdraw) all_withdraws;
 
@@ -186,21 +188,29 @@ contract Main {
   }
 
   // Passing structs via calldata fails solc with unimplemented error
-  // function fill(ITT calldata itt, POI calldata poi/*, sigs*/)
-  function fill(
-    ${funargs_struct "itt" ittTy},
-    ${funargs_struct "poi" poiTy}
+  // function exchange(ITT calldata itt, POI calldata poi/*, sigs*/)
+  function exchange(
+    bytes32[${length (_members ittTy)}] calldata ittBytes,
+    bytes32[${length (_members poiTy)}] calldata poiBytes,
+    byte[65] calldata itt_sig,
+    byte[65] calldata poi_sig
     )
-    public
+    external
   {
-    // TODO VERIFY SIGS
-    require(address(this) == __itt_BEACON_CONTRACT, "Wrong ITT contract");
-    require(address(this) == __poi_BEACON_CONTRACT, "Wrong POI contract");
+    ITT memory itt;
+    ${unpack_struct ittTy "ittBytes" "itt"}
+    POI memory poi;
+    ${unpack_struct poiTy "poiBytes" "poi"}
 
-    bytes32 itt_digest = ${ref_hashstruct "itt" ittTy}
-    require(itt_digest == ${ref_struct_member "poi" "itt_hash"},
+    // TODO VERIFY SIGS
+    require(address(this) == itt.BEACON_CONTRACT,
+            "Wrong ITT contract");
+    require(address(this) == poi.BEACON_CONTRACT,
+            "Wrong POI contract");
+
+    bytes32 itt_digest = ${ref_eip712HashStruct "itt" ittTy};
+    require(itt_digest == poi.itt_hash,
            "ITT hash does not match");
-    //require
   }
      
   /*
