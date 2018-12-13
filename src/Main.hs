@@ -37,11 +37,18 @@ main_sol :: Text
 main_sol = renderMarkupStrict
   $(Sol.renderFile "templates/Exchange.sol")
 
+-- Technically doesn't do any templating so we could just copy
 safemath_sol :: Text
 safemath_sol = renderMarkupStrict
   $(Sol.renderFile "templates/SafeMath.sol")
+
+-- Technically doesn't do any templating so we could just copy
+ecverify_sol :: Text
+ecverify_sol = renderMarkupStrict
+  $(Sol.renderFile "templates/ECVerify.sol")
 
 main :: IO ()
 main = do
   writeFileUtf8Builder "artifacts/sol/Exchange.sol" (display main_sol)
   writeFileUtf8Builder "artifacts/sol/SafeMath.sol" (display safemath_sol)
+  writeFileUtf8Builder "artifacts/sol/ECVerify.sol" (display ecverify_sol)
