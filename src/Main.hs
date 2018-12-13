@@ -35,7 +35,7 @@ poiTy = Sol.struct "POI" -- TODO annotation
 
 main_sol :: Text
 main_sol = renderMarkupStrict
-  $(Sol.renderFile "templates/Main.sol")
+  $(Sol.renderFile "templates/Exchange.sol")
 
 safemath_sol :: Text
 safemath_sol = renderMarkupStrict
@@ -43,5 +43,5 @@ safemath_sol = renderMarkupStrict
 
 main :: IO ()
 main = do
-  writeFileUtf8Builder "artifacts/sol/Main.sol" (display main_sol)
+  writeFileUtf8Builder "artifacts/sol/Exchange.sol" (display main_sol)
   writeFileUtf8Builder "artifacts/sol/SafeMath.sol" (display safemath_sol)

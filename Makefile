@@ -17,8 +17,8 @@ codegen: $(sources)
 	stack exec codegen
 
 # TODO fix dep
-bin/Main.bin: codegen
+artifacts/bin/Exchange.bin: codegen
 	mkdir -p artifacts/bin
-	solc --overwrite -o artifacts/bin/ --optimize --bin --allow-paths artifacts/sol/ artifacts/sol/Main.sol
+	solc --overwrite -o artifacts/bin/ --optimize --bin --allow-paths artifacts/sol/ artifacts/sol/Exchange.sol
 
-bins: bin/Main.bin
+bins: artifacts/bin/Exchange.bin
