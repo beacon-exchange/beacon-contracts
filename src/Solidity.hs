@@ -14,6 +14,8 @@ module Solidity (
 
   -- code generators
   def_struct,
+  def_eip712StructTypeHash,
+  ref_eip712StructTypeHash,
   -- funargs_struct,
   ref_eip712StructRepLiteral,
   ref_eip712HashStruct,
@@ -24,7 +26,7 @@ module Solidity (
 #define WORD_SIZE 32
 
 import RIO
--- import qualified RIO.Text as T
+import qualified RIO.Text as T
 
 import Solidity.QQUtils
 
@@ -98,12 +100,26 @@ ref_eip712StructRepLiteral (Struct name membs _) = renderMarkupStrict
       xs = enumerateDesc membs
       sep ix = if ix > 0 then "," else ""::Text
 
+-- collisions are unlikely but possible due to case insensitivity.
+-- don't create struct names which only differ in case!
+ref_eip712StructTypeHash :: Struct -> Text
+ref_eip712StructTypeHash (Struct (Name name) _ _) =
+  "__" <> upper_name <> "_EIP712_TYPEHASH"
+  where
+    upper_name = T.toUpper name
+
+def_eip712StructTypeHash :: Struct -> Markup
+def_eip712StructTypeHash s =
+  -- double check me
+  [sol|bytes32 constant ${ref_eip712StructTypeHash s} =
+    keccak256(${ref_eip712StructRepLiteral s});|]
+
 -- Generate a call to keccak256 the abi packed encoding of a struct.
 -- only works when members are all single word types.
 ref_eip712HashStruct:: Name -> Struct -> Markup
 ref_eip712HashStruct varName s@(Struct _ membs _) =
   [sol|keccak256(abi.encode(
-        keccak256(bytes(${ref_eip712StructRepLiteral s})),
+        ${ref_eip712StructTypeHash s},
     %{forall (ix, (nm, ty)) <- xs}
       %{if isWord ty}
         ${varName}.${nm}${sep ix}

@@ -33,6 +33,7 @@ contract Main {
   }
 
   ${def_struct eip712DomainTy}
+  ${def_eip712StructTypeHash eip712DomainTy}
 
   // should be a constant
   function eip712DomainSeparator() public view returns (bytes32) {
@@ -44,7 +45,7 @@ contract Main {
       address(this);
 
     return keccak256(abi.encode(
-      keccak256(bytes(${ref_eip712StructRepLiteral eip712DomainTy})), // TYPEHASH
+      ${ref_eip712StructTypeHash eip712DomainTy},
       keccak256(bytes(${ref_struct_member "eip712Domain" "name"})),
       keccak256(bytes(${ref_struct_member "eip712Domain" "version"})),
       ${ref_struct_member "eip712Domain" "verifyingContract"}
@@ -53,10 +54,10 @@ contract Main {
 
   /*** Off-chain structs ***/
   ${def_struct ittTy}
-  string constant itt_eip712name = ${ref_eip712StructRepLiteral ittTy};
+  ${def_eip712StructTypeHash ittTy}
 
   ${def_struct poiTy}
-  string constant poi_eip712name = ${ref_eip712StructRepLiteral poiTy};
+  ${def_eip712StructTypeHash poiTy}
 
   /*** Contract data structures ***/
 
