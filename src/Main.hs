@@ -19,7 +19,7 @@ ittTy = Sol.struct "ITT" -- TODO annotation
   , address "dst"
   , uint256 "base_amount"
   , uint256 "dst_amount"
-  , uint256 "forfeiture_fee"
+  , bytes32 "forfeiture_fee_id"
   , uint256 "challenge_period_seconds"
   , bytes32 "nonce"
   ]
