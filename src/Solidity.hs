@@ -132,6 +132,7 @@ unpack_struct (Struct _ members _) srcVar dstVar = [sol|
   where
     xs = map (first (*32)) $ enumerate members
 
+-- In places where we can't create a struct, just unpack the values.
 ref_struct_member :: Name -> Name -> Name
 ref_struct_member varName memberName = "__" <> varName <> "_" <> memberName
 

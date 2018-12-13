@@ -31,19 +31,23 @@ contract Main {
     address addr;
   }
 
-
   ${def_struct eip712DomainTy}
 
-  string constant ${ref_struct_member "eip712Domain" "name"} =
-    "Beacon Exchange";
-  string constant ${ref_struct_member "eip712Domain" "version"} =
-    "v0.0.0";
+  function eip712DomainSeparator() public view returns (bytes32) {
+    string memory ${ref_struct_member "eip712Domain" "name"} =
+      "Beacon Exchange";
+    string memory ${ref_struct_member "eip712Domain" "version"} =
+      "v0.0.0";
+    address ${ref_struct_member "eip712Domain" "verifyingContract"} =
+      address(this);
 
-  bytes32 constant eip712DomainSeparator = keccak256(abi.encode(
-    keccak256(bytes(${ref_eip712StructRepLiteral eip712DomainTy})), // TYPEHASH
-    keccak256(bytes(${ref_struct_member "eip712Domain" "name"})),
-    keccak256(bytes(${ref_struct_member "eip712Domain" "version"}))
-  ));
+    return keccak256(abi.encode(
+      keccak256(bytes(${ref_eip712StructRepLiteral eip712DomainTy})), // TYPEHASH
+      keccak256(bytes(${ref_struct_member "eip712Domain" "name"})),
+      keccak256(bytes(${ref_struct_member "eip712Domain" "version"})),
+      ${ref_struct_member "eip712Domain" "verifyingContract"}
+    ));
+  }
 
   /*** Off-chain structs ***/
   ${def_struct ittTy}
