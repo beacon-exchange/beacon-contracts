@@ -204,6 +204,8 @@ contract Main {
     external
   {
     ITT memory itt;
+    // Optimization opportunity:
+    // technically we don't need every single field in itt and poi.
     ${unpack_struct ittTy "ittBytes" "itt"}
     POI memory poi;
     ${unpack_struct poiTy "poiBytes" "poi"}
@@ -222,6 +224,15 @@ contract Main {
 
     bytes32 poi_digest = ${ref_eip712HashStruct "poi" poiTy};
     require(ECVerify.ecverify(eip712encode(poi_digest), poi_sig) == poi.sender);
+
+    // DepositBalance storage base = deposit_balance(itt.base, itt.sender);
+    // DepositBalance storage dst = deposit_balance(itt.dst, poi.sender);
+    require(
+      ERC20(itt.base).transferFrom(itt.sender, poi.sender, itt.base_amount),
+      "exchange: base -> dst");
+    require(
+      ERC20(itt.dst).transferFrom(poi.sender, itt.sender, itt.dst_amount),
+      "exchange: dst -> base");
   }
 
   // EIP712 encoding

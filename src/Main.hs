@@ -14,10 +14,11 @@ eip712DomainTy = Sol.struct "EIP712Domain"
 ittTy :: Sol.Struct
 ittTy = Sol.struct "ITT" -- TODO annotation
   [ address "BEACON_CONTRACT"
+  , address "sender"
   , address "base"
   , address "dst"
-  , address "sender" -- is this always inferrable from context/sig?
-  , uint256 "amount"
+  , uint256 "base_amount"
+  , uint256 "dst_amount"
   , uint256 "forfeiture_fee"
   , uint256 "challenge_period_seconds"
   , bytes32 "nonce"
@@ -26,8 +27,8 @@ ittTy = Sol.struct "ITT" -- TODO annotation
 poiTy :: Sol.Struct
 poiTy = Sol.struct "POI" -- TODO annotation
   [ address "BEACON_CONTRACT"
-  , address "itt_base"
-  , address "itt_dst"
+  -- , address "itt_base"
+  -- , address "itt_dst"
   , address "sender"
   -- uint256 amount; // assume no partial fills for now.
   , bytes32 "itt_hash"
