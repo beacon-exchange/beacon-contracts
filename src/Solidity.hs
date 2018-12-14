@@ -16,11 +16,9 @@ module Solidity (
   def_struct,
   def_eip712StructTypeHash,
   ref_eip712StructTypeHash,
-  -- funargs_struct,
   ref_eip712StructRepLiteral,
   ref_eip712HashStruct,
   ref_struct_member,
-  unpack_struct,
 ) where
 
 #define WORD_SIZE 32
@@ -136,31 +134,6 @@ ref_eip712HashStruct varName s@(Struct _ membs _) =
       -- TODO abstract this function
       sep ix = if ix > 0 then "," else ""::Text
 
--- We can't pass structs via call data yet, so we pass them via bytes32 array
--- and unpack them into a struct.
-unpack_struct :: Struct -> Name -> Name -> Markup
-unpack_struct (Struct _ members _) srcVar dstVar = [sol|
-  // HLL CODEGEN: unpack ${srcVar} into ${dstVar}
-  assembly {
-    calldatacopy(${dstVar}, ${srcVar}, ${len})
-  }
-  |]
-  where
-    len = WORD_SIZE * length members
-
 -- In places where we can't create a struct, just unpack the values.
 ref_struct_member :: Name -> Name -> Name
 ref_struct_member varName memberName = "__" <> varName <> "_" <> memberName
-
-{-funargs_struct :: Name -> Struct -> Markup
-funargs_struct varName (Struct name membs _) =
-  [sol|
-  // HLL CODEGEN: ${name} ${varName}
-  %{forall (ix, (membername, ty)) <- xs}
-    ${ty} ${ref_struct_member varName membername}${sep ix}
-  %{endforall}
-   |]
-   where
-     xs = enumerateDesc membs
-     sep ix = if ix > 0 then "," else ""::Text
-     -}

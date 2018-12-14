@@ -372,19 +372,13 @@ contract Main {
   // Alternative: exchange(ITT memory itt,...) public
   // which requires ABIEncoderV2 instead of asm (pick your poison!)
   function exchange(
-    bytes32[${length (_members ittTy)}] calldata ittBytes,
-    bytes32[${length (_members poiTy)}] calldata poiBytes,
-    bytes calldata tkr_sig
+    ITT memory itt,
+    POI memory poi,
+    bytes memory tkr_sig
     )
-    external
+    public //external
     returns (bool success)
   {
-    ITT memory itt;
-    ${unpack_struct ittTy "ittBytes" "itt"}
-
-    POI memory poi;
-    ${unpack_struct poiTy "poiBytes" "poi"}
-
     // check based on domain separator?
     require(address(this) == itt.BEACON_CONTRACT,
             "Wrong ITT contract");
