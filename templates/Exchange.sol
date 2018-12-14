@@ -2,7 +2,7 @@
 // Not optimized for code size, gas, or anything really.
 // Not audited. Correctness may vary.
 pragma solidity ^0.5.1;
-// pragma experimental ABIEncoderV2;
+pragma experimental ABIEncoderV2;
 import './SafeMath.sol';
 import './ECVerify.sol';
 
@@ -22,17 +22,9 @@ contract Main {
   using SafeMath for uint256;
 
   uint256 constant LOCKUP_PERIOD_SECONDS = 600; // 10 minutes
-  uint256 nonce = 0; // can this be memory?
+  uint256 forfeiture_fee_nonce = 0; // can this be memory?
 
-  // can't actually use these newtypes as map keys
-  // so they are not really used
-  struct UserAddress {
-    address addr;
-  }
-  struct TokenAddress {
-    address addr;
-  }
-
+  /* Maybe a way to corral all external calls to transition function
   struct JournalEntry {
     ERC20 asset;
     address from;
@@ -41,16 +33,25 @@ contract Main {
   }
 
   // Number of transfers per call is limited.
-  JournalEntry[] memory journal_entries = new JournalEntry[](16);
+  function allocate_journal() returns (JournalEntry[] memory)
+    private
+  {
+    return new JournalEntry[](16);
+  }
 
   // Always call at end of function after internal state changes.
-  function execute_journal()
+  function execute_journal(JournalEntry[] memory entries)
     private
   {
     for (entry in journal_entries) {
-      entry.asset.transferFrom(entry.from, entry.to, entry.amount);
+      if (entry.from == address(this)) {
+        require(entry.asset.transfer(entry.to, entry.amount));
+      } else {
+        require(entry.asset.transferFrom(entry.from, entry.to, entry.amount));
+      }
     }
   }
+ */
 
   // where tokens go when they are burnt.
   // some sort of charity or insurance fund but 0x00 for POC.
@@ -94,29 +95,115 @@ contract Main {
   // escrow balance must go through lockup process to withdraw to allow
   // for challenges.
   struct Escrow {
+    EscrowState state; // this can probably be inferred by unencumbered_at
     uint256/*timestamp*/ unencumbered_at;
-    // Non-null if proof of ITT referencing this escrow has been seen.
-    address claimant;
+    bytes32 spent_proof; // non-null if proof of spend has been seen
+    address beneficiary;
     uint256 amount;
     // Never accessed except for slashing in case of double spend proof
     uint256 buffer_balance;
   }
 
+  struct Challenge {
+    uint256/*timestamp*/ ends_at;
+    bytes32 escrow_id;
+    address incumbent;
+    address challenger;
+    uint256 base_amount;
+    uint256 dst_amount;
+    bool forfeited;
+  }
 
-  mapping(address/*user*/ => mapping(bytes32 => Escrow)) escrows;
+  struct Deposit {
+    uint256 deposit_balance;
+  }
+
+
+  mapping(address/*token*/ => mapping(address/*user*/ => mapping(bytes32 => Escrow))) escrows;
+
+  mapping(address/*token*/ => mapping(address/*user*/ => Deposit)) deposits;
+
+  mapping(address/*token*/ => uint256) balances;
+
+  mapping(address/*base*/ => mapping(address/*dst*/ => mapping(bytes32/*itt hash*/ => Challenge))) challenges;
 
 
   function() external {
     revert();
   }
 
+  function _lookup_deposit(ERC20 tok, address sender)
+    private
+    view // calculating the key should be pure but alas
+    returns (Deposit storage)
+  {
+    return deposits[address(tok)][sender];
+  }
+
+  function _lookup_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
+    private
+    view
+    returns (Challenge storage)
+  {
+    return challenges[address(base)][address(dst)][itt_hash];
+  }
+
+  // single-entry functions!! must always have offsetting txn
+  function _debit(ERC20 tok, address user, uint256 amount)
+    private
+  {
+    if (user == address(this)) {
+      // self balances are debit normal
+      balances[address(tok)] = balances[address(tok)].add(amount);
+    } else {
+      Deposit storage d = _lookup_deposit(tok, user);
+      // user deposits are credit normal
+      d.deposit_balance = d.deposit_balance.sub(amount);
+    }
+  }
+  function _credit(ERC20 tok, address user, uint256 amount)
+    private
+  {
+    if (user == address(this)) {
+      // self balances are debit normal
+      balances[address(tok)] = balances[address(tok)].sub(amount);
+    } else {
+      Deposit storage d = _lookup_deposit(tok, user);
+      // user deposits are credit normal
+      d.deposit_balance = d.deposit_balance.add(amount);
+    }
+  }
+
+  function deposit(ERC20 tok, uint256 amount)
+    external
+  {
+    // JE
+    //   DR
+    _debit(tok, address(this), amount);
+    //   CR
+    _credit(tok, msg.sender, amount);
+
+    tok.transferFrom(msg.sender, address(this), amount);
+  }
+
+  function withdraw(ERC20 tok, uint256 amount)
+    external
+  {
+    // JE
+    //   DR
+    _debit(tok, msg.sender, amount);
+    //   CR
+    _credit(tok, address(this), amount);
+
+    tok.transfer(msg.sender, amount);
+  }
 
   function _lookup_escrow(ERC20 tok, address sender, bytes32 id)
     private
-    view // calculating the key should be pure but alas
+    view
     returns (Escrow storage)
   {
-    return escrows[sender][id];
+    return escrows[address(tok)][sender][id];
   }
 
 
@@ -129,27 +216,30 @@ contract Main {
     // Technically there is possibility of overflow but it would be
     // practically impossible to generate enough function calls in a single
     // block to generate a collision.
-    this.nonce++; // Alternative: User-provided nonce?
+    forfeiture_fee_nonce++; // Alternative: User-provided nonce?
     //   Could save gas but requires extra checks.
 
-    bytes32 constant blockhash = block.blockhash(block.number);
-    bytes32 constant id = keccak256(abi.encodePacked(this.nonce, blockhash));
+    bytes32 _blockhash = blockhash(block.number);
+    bytes32 id = keccak256(abi.encodePacked(forfeiture_fee_nonce, _blockhash));
 
     Escrow storage escrow =
       _lookup_escrow(tok, msg.sender, id);
 
-    escrow.state = EscrowState.OnDeposit;
-    escrow.unencumbered_at = (-1);
+    assert(escrow.state == EscrowState.Invalid);
 
+    escrow.state = EscrowState.OnDeposit;
+    escrow.unencumbered_at = uint256(-1);
+
+    // JE
+    assert(amount + escrow.buffer_balance == total_amount);
+    //   DR
+    _debit(tok, msg.sender, total_amount);
+    //   CR
     escrow.amount = amount;
     // optimization opp: skip sstore and trust escrow_balance == buffer_balance
     escrow.buffer_balance = amount;
 
-    assert(escrow.amount + escrow.buffer_balance == total_amount);
-
-    // approval in separate step
-    require(tok.transferFrom(msg.sender, address(this), total_amount),
-           "deposit failed: transferFrom");
+    return id;
     // TODO LOG
   }
 
@@ -157,24 +247,33 @@ contract Main {
   function _slash_escrow(ERC20 tok, address owner, bytes32 id, address claimant)
     private
   {
-    assert(escrow.amount == escrow.buffer_amount);
-
+    Escrow storage escrow = _lookup_escrow(tok, owner, id);
     uint256 amount = escrow.amount;
     uint256 error_bit = amount % 2;
-    uint256 claim1_amount = amount.div(2);
     // arbitrarily assign the error bit.
-    uint256 claim2_amount = amount.div(2) + error_bit;
+    uint256 claim1_amount = amount.div(2) + error_bit;
+    uint256 claim2_amount = amount.div(2);
 
-    // TODO !!!UNSAFE!!! withdraw in two steps
-    tok.transfer(escrow.claimant, claim1_amount);
-    tok.transfer(claimant, claim2_amount);
-    tok.transfer(BURN_FUND, amount);
+    // JE
+    assert(claim1_amount + claim2_amount == amount);
+    //   DR
+    escrow.amount = 0; // redundant with later delete
+    //   CR
+    _credit(tok, escrow.beneficiary, claim1_amount);
+    _credit(tok, claimant, claim2_amount);
+
+    // JE
+    assert(escrow.buffer_balance == amount);
+    //   DR
+    escrow.buffer_balance = 0; // redundant with later delete
+    //   CR
+    _credit(tok, BURN_FUND, amount);
+
+    delete escrows[address(tok)][owner][id];
   }
 
 
-  // claimant is nonzero iff there is record of a valid ITT referencing
-  // this forfeiture fee.
-  function _initiate_escrow_claim(ERC20 tok, address owner, bytes32 id, uint256 unencumbered_at, address claimant)
+  function _initiate_escrow_claim(ERC20 tok, address owner, bytes32 id, uint256 unencumbered_at, address claimant, bytes32 spent_proof)
     private
     returns (bool success)
   {
@@ -190,23 +289,21 @@ contract Main {
     if (escrow.unencumbered_at < block.timestamp) {
       return false;
     }
-    if (!claimant) { // Simple withdraw. No proof of ITT.
-      // TODO double check msg.sender semantics for private calls
-      if (escrow.claimant != msg.sender) {
+    if (spent_proof == bytes32(0)) { // Simple withdraw. No proof of ITT.
+      if (escrow.beneficiary != claimant) {
         // Already encumbered.
         return false;
       }
     } else {
-      if (escrow.claimant != claimant) {
-        _slash_escrow(escrow, claimant);
-        delete escrows[tok][owner][id];
+      if (escrow.spent_proof != bytes32(0) && escrow.spent_proof != spent_proof) {
+        _slash_escrow(tok, owner, id, claimant);
         return false;
       }
-      escrow.claimant = claimant;
     }
 
     escrow.state = EscrowState.Withdrawing;
     escrow.unencumbered_at = unencumbered_at;
+    escrow.beneficiary = claimant;
 
     return true;
   }
@@ -216,56 +313,55 @@ contract Main {
     external
   {
     uint256 unencumbered_at = block.timestamp + LOCKUP_PERIOD_SECONDS;
-    address claimant = address(0);
-    _initiate_escrow_claim(tok, msg.sender, id, unencumbered_at, claimant);
+    _initiate_escrow_claim(tok, msg.sender, id, unencumbered_at, msg.sender, bytes32(0));
   }
 
 
   function contest_escrow_withdraw(ERC20 tok, ITT memory itt, bytes memory mkr_sig)
     public // should be external but no struct in calldata
   {
-    // TODO verify itt hash/sig
+    bytes32 itt_digest = ${ref_eip712HashStruct "itt" ittTy};
+    require(ECVerify.ecverify(eip712encode(itt_digest), mkr_sig) == itt.sender,
+           "Invalid signature");
 
-    unencumbered_at = block.timestamp + itt.challenge_period_seconds;
-    _initiate_escrow_claim(tok, itt.sender, itt.forfeiture_fee_id, unencumbered_at, msg.sender);
+    uint256 unencumbered_at = block.timestamp + itt.challenge_period_seconds;
+    _initiate_escrow_claim(tok, itt.sender, itt.forfeiture_fee_id, unencumbered_at, msg.sender, itt_digest);
   }
 
 
   function finalize_escrow_withdraw(ERC20 tok, address owner, bytes32 escrow_id)
     external
   {
-    _finalize_escrow_withdraw(tok, owner, escrow_id, msg.sender);
-  }
-
-  function _finalize_escrow_withdraw(ERC20 tok, address owner, bytes32 escrow_id)
-    private
-  {
-    Escrow storage escrow = lookup_escrow(tok, owner, escrow_id);
+    Escrow storage escrow = _lookup_escrow(tok, owner, escrow_id);
 
     require(escrow.unencumbered_at < block.timestamp,
            "Escrow not withdrawable yet");
 
-    address beneficiary;
+    address beneficiary = escrow.beneficiary;
 
-    if (escrow.claimant) {
-      beneficiary = escrow.claimant;
-    } else {
-      beneficiary = owner;
-    }
     // Allow proxy to call?
     // FIXME pass sender as param
     require(msg.sender == beneficiary,
             "Not the beneficiary");
 
-    // can use unsafe math?
-    uint256 amount = escrow.amount.add(escrow.buffer_amount);
+    uint256 amount = escrow.amount;
+    uint256 buffer_amount = escrow.buffer_balance;
+    assert(amount == buffer_amount);
 
-    // clear storage
+    // JE
+    //   DR
+    escrow.amount = 0;
+    //   CR
+    _credit(tok, beneficiary, amount);
+
+    // JE
+    //   DR
+    escrow.buffer_balance = 0;
+    //   CR
+    _credit(tok, owner, buffer_amount);
+
     //delete escrow; <-- does not compile
-    delete escrow[tok][owner][escrow_id];
-
-    // TODO move into separate step.
-    tok.transfer(beneficiary, amount);
+    delete escrows[address(tok)][owner][escrow_id];
 
     // TODO LOG
   }
@@ -279,8 +375,9 @@ contract Main {
     bytes32[${length (_members ittTy)}] calldata ittBytes,
     bytes32[${length (_members poiTy)}] calldata poiBytes,
     bytes calldata tkr_sig
-    ) returns (bool success)
+    )
     external
+    returns (bool success)
   {
     ITT memory itt;
     ${unpack_struct ittTy "ittBytes" "itt"}
@@ -309,20 +406,28 @@ contract Main {
 
     // require taker signature for POI hash
     // TODO consider wrapping in 'Accept' struct
-    require(ECVerify.ecverify(eip712encode(poi_digest), tkr_sig) == poi.sender);
+    require(ECVerify.ecverify(eip712encode(poi_digest), tkr_sig) == poi.sender,
+           "Invalid signature");
 
-    escrow_unencumbered_at = block.timestamp + LOCKUP_PERIOD_SECONDS;
-    escrow_valid = _initiate_escrow_claim(tok, itt.sender, id, unencumbered_at, itt.sender);
-    if (!escrow_valid) {
+    ERC20 base = ERC20(itt.base);
+    ERC20 dst = ERC20(itt.dst);
+
+    uint256 unencumbered_at = block.timestamp + LOCKUP_PERIOD_SECONDS;
+    if (!_initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest)) {
       return false;
     }
 
-    require(
-      ERC20(itt.base).transferFrom(itt.sender, poi.sender, itt.base_amount),
-      "exchange: base -> dst");
-    require(
-      ERC20(itt.dst).transferFrom(poi.sender, itt.sender, itt.dst_amount),
-      "exchange: dst -> base");
+    // JE
+    //   DR
+    _debit(base, itt.sender, itt.base_amount);
+    //   CR
+    _credit(base, poi.sender, itt.base_amount);
+
+    // JE
+    //   DR
+    _debit(dst, poi.sender, itt.dst_amount);
+    //   CR
+    _credit(dst, itt.sender, itt.dst_amount);
 
     return true;
   }
@@ -339,40 +444,40 @@ contract Main {
       structDigest));
   }
 
-  struct Challenge {
-    uint256/*timestamp*/ ends_at;
-    bytes32 escrow_id;
-    address incumbent;
-    address challenger;
-    uint256 base_amount;
-    uint256 dst_amount;
-    bool forfeited;
-  }
-  function initiate_challenge(ITT memory itt, POI memory poi, bytes memory mkr_sig)
+
+  function initiate_challenge(ITT memory itt, bytes memory mkr_sig)
     public/*should be external*/
   {
-    // TODO validate sigs, hashes
+    address challenger = msg.sender;
 
-    Challenge storage c = _lookup_challenge(itt.base, itt.dst, poi.itt_hash);
-    require(!c.ends_at,
+    bytes32 itt_digest = ${ref_eip712HashStruct "itt" ittTy};
+    require(ECVerify.ecverify(eip712encode(itt_digest), mkr_sig) == itt.sender,
+           "Invalid signature");
+
+    ERC20 base = ERC20(itt.base);
+    ERC20 dst = ERC20(itt.dst);
+    Challenge storage c = _lookup_challenge(base, dst, itt_digest);
+    require(c.ends_at != 0,
             "ITT already challenged");
 
     uint256 ends_at = block.timestamp + itt.challenge_period_seconds;
 
-    // TODO xfer in
-
     /* TODO revisit assumption: forfeiture fee token is itt.base. */
-    if (_initiate_escrow_claim(itt.base, itt.sender, itt.forfeiture_fee_id, ends_at, poi.sender)) {
+    bool valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, ends_at, challenger, itt_digest);
+    if (valid) {
       // modify state.
-      c = Challenge({
-        ends_at: ends_at,
-        escrow_id: itt.forfeiture_fee_id,
-        incumbent: itt.sender,
-        challenger: poi.sender,
-        base_amount: itt.base_amount,
-        dst_amount: itt.dst_amount,
-        forfeited: false
-      });
+      // JE
+      //   DR
+      _debit(base, itt.sender, itt.base_amount);
+      _debit(dst, challenger, itt.dst_amount);
+      //   -->
+      c.ends_at = ends_at;
+      c.escrow_id = itt.forfeiture_fee_id;
+      c.incumbent = itt.sender;
+      c.challenger = challenger;
+      c.base_amount = itt.base_amount; // CR
+      c.dst_amount = itt.dst_amount; // CR
+      c.forfeited = false; // could omit
     }
   }
 
@@ -380,49 +485,87 @@ contract Main {
     external
   {
     Challenge storage c = _lookup_challenge(base, dst, itt_hash);
-    require(c.incumbent == itt.sender,
+    require(c.incumbent == msg.sender,
             "Not authorized");
     require(c.ends_at > block.timestamp,
            "Challenge ended");
 
-    uint256 base_amount = c.base_amount;
-    c.base_amount = 0;
     c.forfeited = true;
 
-    base.transfer(c.incumbent, base_amount);
+    // JE
+    uint256 base_amount = c.base_amount;
+    //   DR
+    c.base_amount = 0;
+    //   CR
+    _credit(base, c.incumbent, base_amount);
+  }
+
+  function min(uint256 x, uint256 y)
+    private
+    pure
+    returns (uint256)
+  {
+    return x < y ? x : y;
   }
 
   function resolve_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
     external
   {
-    // Don't grab pointer.
-    Challenge c = _lookup_challenge(base, dst, itt_hash);
+    // optimization opportunity: if read-only, just make copy.
+    Challenge storage c = _lookup_challenge(base, dst, itt_hash);
+
+    address mkr = c.incumbent;
+    address tkr = c.challenger;
+
+    Escrow storage escrow = _lookup_escrow(base, mkr, c.escrow_id);
+
+    uint256 new_escrow_unlock_at =
+      min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
 
     if (msg.sender == c.incumbent) {
       require(!c.forfeited,
               "Already forfeited");
-      address mkr = c.incumbent;
-      address tkr = c.challenger;
 
-      journal_entries.push(JournalEntry(base, address(this), tkr, c.base_amount));
-      journal_entries.push(JournalEntry(dst, address(this), mkr, c.dst_amount));
+      // JE
+      //   DR
+      _debit(base, mkr, c.base_amount);
+      //   CR
+      c.base_amount = 0; // for clarity; redundant with later delete
 
-      // TODO reassign escrow beneficiary to incumbent, restart withdrawal period.
+      // JE
+      //   DR
+      _debit(dst, tkr, c.dst_amount);
+      //   CR
+      c.dst_amount = 0; // for clarity; redundant with later delete.
+
+      escrow.beneficiary = c.incumbent;
+      escrow.unencumbered_at = new_escrow_unlock_at;
+
+      assert(escrow.spent_proof == itt_hash); // TODO double check
+
     } else if (msg.sender == c.challenger) {
-      require(c.ends_at < block.timestamp,
+      require(c.ends_at < block.timestamp || escrow.state != EscrowState.Invalid,
               "Challenge not ended yet");
-      if (c.forfeited) {
-        journal_entries.push(JournalEntry(dst, address(this), tkr, dst_amount));
-        _finalize_escrow_withdrawal(base, c.incumbent, c.escrow_id, msg.sender);
+      if (escrow.state != EscrowState.Invalid) {
+        assert(escrow.beneficiary == c.challenger);
+        assert(escrow.spent_proof == itt_hash);
+        escrow.unencumbered_at = new_escrow_unlock_at;
+      } else {
+        // the escrow was slashed, funds are free to withdraw
       }
+
+      // JE
+      uint256 amt = c.dst_amount;
+      //   DR
+      c.dst_amount = 0;
+      //   CR
+      _credit(dst, c.challenger, amt);
     } else {
       // Allow proxy to call?
       require(false,
               "Not authorized");
     }
 
-    delete challenges[base][dst][itt_hash];
-
-    execute_journal();
+    delete challenges[address(base)][address(dst)][itt_hash];
   }
 }
