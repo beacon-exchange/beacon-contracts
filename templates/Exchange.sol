@@ -454,7 +454,7 @@ contract Main {
     ERC20 base = ERC20(itt.base);
     ERC20 dst = ERC20(itt.dst);
     Challenge storage c = _lookup_challenge(base, dst, itt_digest);
-    require(c.ends_at != 0,
+    require(c.ends_at == 0,
             "ITT already challenged");
 
     uint256 ends_at = block.timestamp + itt.challenge_period_seconds;
