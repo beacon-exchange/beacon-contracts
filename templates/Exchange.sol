@@ -580,6 +580,8 @@ contract Main {
       require(!c.forfeited || escrow.state == EscrowState.Invalid/*slashed*/,
               "Already forfeited");
 
+      // TODO if challenge has expired, trade no longer possible.
+
       // TODO skip if zero
       // JE
       //   DR
@@ -609,7 +611,7 @@ contract Main {
               || escrow.state == EscrowState.Invalid/*escrow was slashed*/,
               "Challenge not ended yet");
       if (escrow.state != EscrowState.Invalid) {
-        // challenge expired, add additional lockup to give opportunity
+        // Challenge expired. Add additional lockup to give opportunity
         // for double spend proof to be provided in the case of very
         // short lockups.
         assert(escrow.beneficiary == c.challenger);
