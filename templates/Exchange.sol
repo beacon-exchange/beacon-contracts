@@ -341,7 +341,7 @@ contract Main {
         escrow.spent_proof != spent_proof;
 
       if (should_slash) {
-        _slash_escrow(tok, owner, id, claimant);
+        _slash_escrow(tok, owner, id, claimant); // inline me?
         return false;
       }
     }
@@ -362,7 +362,8 @@ contract Main {
   }
 
 
-  function contest_escrow_withdraw(ERC20 tok, ITT memory itt, bytes memory mkr_sig)
+  // Could optimize params size
+  function contest_escrow_withdraw(ITT memory itt, bytes memory mkr_sig)
     public // should be external but no struct in calldata
   {
     bytes32 itt_digest = ${ref_eip712HashStruct "itt" ittTy};
@@ -370,9 +371,31 @@ contract Main {
            "Invalid signature");
 
     uint256 unencumbered_at = block.timestamp + itt.challenge_period_seconds;
-    _initiate_escrow_claim(tok, itt.sender, itt.forfeiture_fee_id, unencumbered_at, msg.sender, itt_digest);
 
-    // TODO create challenge which is forfeited
+    ERC20 base = ERC20(itt.base);
+    ERC20 dst = ERC20(itt.dst);
+    bool valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, msg.sender, itt_digest);
+
+    if (valid) {
+      // Create pre-forfeited challenge to lock funds for challenge period.
+      Challenge storage c = _lookup_challenge(base, dst, itt_digest);
+      assert(c.ends_at == 0);
+
+      // JE
+      //   DR
+      _debit(dst, msg.sender, itt.dst_amount);
+      // -->
+      c.ends_at = block.timestamp + itt.challenge_period_seconds;
+      c.escrow_id = itt.forfeiture_fee_id;
+      c.incumbent = itt.sender; // necessary?
+      c.challenger = msg.sender;
+      c.base_amount = 0; // could omit
+      //   CR <--
+      c.dst_amount = itt.dst_amount;
+      c.forfeited = true;
+
+    } else { // escrow got slashed.
+    }
   }
 
 
@@ -458,7 +481,7 @@ contract Main {
     // Note: This will succeed (not slash) if escrow is in withdraw
     //   process with no existing spend proof. This seems like a bug but
     //   could be a feature. Need to think more.
-    bool escrow_valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest)
+    bool escrow_valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest);
     if (!escrow_valid) {
       return false;
     }
@@ -498,18 +521,20 @@ contract Main {
     /* assumption: forfeiture fee token is itt.base. */
     bool valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, ends_at, challenger, itt_digest);
     if (valid) {
-      // modify state.
       // JE
-      //   DR
+      //   DR1
       _debit(base, itt.sender, itt.base_amount);
+      //   DR2
       _debit(dst, challenger, itt.dst_amount);
       //   -->
       c.ends_at = ends_at;
       c.escrow_id = itt.forfeiture_fee_id;
       c.incumbent = itt.sender;
       c.challenger = challenger;
-      c.base_amount = itt.base_amount; // CR
-      c.dst_amount = itt.dst_amount; // CR
+      //   CR1 <--
+      c.base_amount = itt.base_amount;
+      //   CR2 <--
+      c.dst_amount = itt.dst_amount;
       c.forfeited = false; // could omit to save sstore
     }
   }
@@ -595,19 +620,19 @@ contract Main {
       }
 
       // JE
-      uint256 amt = c.dst_amount;
+      uint256 dst_amt = c.dst_amount;
       //   DR
       c.dst_amount = 0;
       //   CR
-      _credit(dst, c.challenger, amt);
+      _credit(dst, c.challenger, dst_amt);
 
 
       // JE
-      uint256 amt = c.base_amount;
+      uint256 base_amt = c.base_amount;
       //   DR
       c.base_amount = 0;
       //   CR
-      _credit(base, c.incumbent, amt);
+      _credit(base, c.incumbent, base_amt);
 
     } else {
       // Allow proxy to call?
