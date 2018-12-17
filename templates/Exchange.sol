@@ -541,7 +541,9 @@ contract Main {
       assert(escrow.spent_proof == itt_hash); // TODO double check
 
     } else if (msg.sender == c.challenger) {
-      require(_expired(c.ends_at) || escrow.state != EscrowState.Invalid,
+
+      require(_expired(c.ends_at)
+              || escrow.state == EscrowState.Invalid/*escrow was slashed*/,
               "Challenge not ended yet");
       if (escrow.state != EscrowState.Invalid) {
         assert(escrow.beneficiary == c.challenger);
