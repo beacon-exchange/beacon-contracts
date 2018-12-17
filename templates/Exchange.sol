@@ -148,6 +148,10 @@ contract Main {
     return challenges[address(base)][address(dst)][itt_hash];
   }
 
+  function _expired(uint256 timestamp) private view returns (bool) {
+    return timestamp < block.timestamp;
+  }
+
   // single-entry functions!! must always have offsetting txn
   function _debit(ERC20 tok, address user, uint256 amount)
     private
@@ -286,7 +290,7 @@ contract Main {
 
     /* KEY LOGIC */
 
-    if (escrow.unencumbered_at < block.timestamp) {
+    if (_expired(escrow.unencumbered_at)) {
       return false;
     }
     if (spent_proof == bytes32(0)) { // Simple withdraw. No proof of ITT.
@@ -334,7 +338,7 @@ contract Main {
   {
     Escrow storage escrow = _lookup_escrow(tok, owner, escrow_id);
 
-    require(escrow.unencumbered_at < block.timestamp,
+    require(_expired(escrow.unencumbered_at),
            "Escrow not withdrawable yet");
 
     address beneficiary = escrow.beneficiary;
@@ -438,7 +442,6 @@ contract Main {
       structDigest));
   }
 
-
   function initiate_challenge(ITT memory itt, bytes memory mkr_sig)
     public/*should be external*/
   {
@@ -481,7 +484,7 @@ contract Main {
     Challenge storage c = _lookup_challenge(base, dst, itt_hash);
     require(c.incumbent == msg.sender,
             "Not authorized");
-    require(c.ends_at > block.timestamp,
+    require(!_expired(c.ends_at),
            "Challenge ended");
 
     c.forfeited = true;
@@ -538,7 +541,7 @@ contract Main {
       assert(escrow.spent_proof == itt_hash); // TODO double check
 
     } else if (msg.sender == c.challenger) {
-      require(c.ends_at < block.timestamp || escrow.state != EscrowState.Invalid,
+      require(_expired(c.ends_at) || escrow.state != EscrowState.Invalid,
               "Challenge not ended yet");
       if (escrow.state != EscrowState.Invalid) {
         assert(escrow.beneficiary == c.challenger);
