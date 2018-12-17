@@ -601,6 +601,14 @@ contract Main {
       //   CR
       _credit(dst, c.challenger, amt);
 
+
+      // JE
+      uint256 amt = c.base_amount;
+      //   DR
+      c.base_amount = 0;
+      //   CR
+      _credit(base, c.incumbent, amt);
+
     } else {
       // Allow proxy to call?
       require(false,
