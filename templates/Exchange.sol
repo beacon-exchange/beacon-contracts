@@ -101,17 +101,20 @@ contract Main {
     address beneficiary;
     uint256 amount;
     // Never accessed except for slashing in case of double spend proof
+    // Can be inferred from amount.
     uint256 buffer_balance;
   }
 
   struct Challenge {
     uint256/*timestamp*/ ends_at;
     bytes32 escrow_id;
+    // incumbent and challenger could pass as function
+    // param every time to save sstore
     address incumbent;
     address challenger;
     uint256 base_amount;
     uint256 dst_amount;
-    bool forfeited;
+    bool forfeited; // optimization: could compress this into ends_at
   }
 
   struct Deposit {
@@ -132,6 +135,33 @@ contract Main {
     revert();
   }
 
+
+  function _expired(uint256 timestamp) private view returns (bool) {
+    return timestamp < block.timestamp;
+  }
+
+
+  function min(uint256 x, uint256 y)
+    private
+    pure
+    returns (uint256)
+  {
+    return x < y ? x : y;
+  }
+
+  // EIP712 encoding
+  function eip712encode(bytes32 structDigest)
+    private
+    view
+    returns (bytes32)
+  {
+    return keccak256(abi.encodePacked(
+      "\x19\x01",
+      eip712DomainSeparator(),
+      structDigest));
+  }
+
+
   function _lookup_deposit(ERC20 tok, address sender)
     private
     view // calculating the key should be pure but alas
@@ -148,9 +178,6 @@ contract Main {
     return challenges[address(base)][address(dst)][itt_hash];
   }
 
-  function _expired(uint256 timestamp) private view returns (bool) {
-    return timestamp < block.timestamp;
-  }
 
   // single-entry functions!! must always have offsetting txn
   function _debit(ERC20 tok, address user, uint256 amount)
@@ -229,6 +256,7 @@ contract Main {
     Escrow storage escrow =
       _lookup_escrow(tok, msg.sender, id);
 
+    // Check that our uuid generation worked.
     assert(escrow.state == EscrowState.Invalid);
 
     escrow.state = EscrowState.OnDeposit;
@@ -277,6 +305,10 @@ contract Main {
   }
 
 
+  // Returns false if
+  //   the escrow is expired,
+  //   the escrow is already encumbered by a challenge
+  //   the escrow got slashed
   function _initiate_escrow_claim(ERC20 tok, address owner, bytes32 id, uint256 unencumbered_at, address claimant, bytes32 spent_proof)
     private
     returns (bool success)
@@ -285,6 +317,8 @@ contract Main {
 
     Escrow storage escrow = _lookup_escrow(tok, owner, id);
 
+    // Perhaps this should be an assert, and this validation should
+    // be performed by the caller.
     require(escrow.state != EscrowState.Invalid,
             "Escrow invalid");
 
@@ -330,6 +364,8 @@ contract Main {
 
     uint256 unencumbered_at = block.timestamp + itt.challenge_period_seconds;
     _initiate_escrow_claim(tok, itt.sender, itt.forfeiture_fee_id, unencumbered_at, msg.sender, itt_digest);
+
+    // TODO create challenge which is forfeited
   }
 
 
@@ -430,18 +466,6 @@ contract Main {
     return true;
   }
 
-  // EIP712 encoding
-  function eip712encode(bytes32 structDigest)
-    private
-    view
-    returns (bytes32)
-  {
-    return keccak256(abi.encodePacked(
-      "\x19\x01",
-      eip712DomainSeparator(),
-      structDigest));
-  }
-
   function initiate_challenge(ITT memory itt, bytes memory mkr_sig)
     public/*should be external*/
   {
@@ -459,7 +483,7 @@ contract Main {
 
     uint256 ends_at = block.timestamp + itt.challenge_period_seconds;
 
-    /* TODO revisit assumption: forfeiture fee token is itt.base. */
+    /* assumption: forfeiture fee token is itt.base. */
     bool valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, ends_at, challenger, itt_digest);
     if (valid) {
       // modify state.
@@ -474,7 +498,7 @@ contract Main {
       c.challenger = challenger;
       c.base_amount = itt.base_amount; // CR
       c.dst_amount = itt.dst_amount; // CR
-      c.forfeited = false; // could omit
+      c.forfeited = false; // could omit to save sstore
     }
   }
 
@@ -482,8 +506,10 @@ contract Main {
     external
   {
     Challenge storage c = _lookup_challenge(base, dst, itt_hash);
+
     require(c.incumbent == msg.sender,
             "Not authorized");
+
     require(!_expired(c.ends_at),
            "Challenge ended");
 
@@ -497,14 +523,11 @@ contract Main {
     _credit(base, c.incumbent, base_amount);
   }
 
-  function min(uint256 x, uint256 y)
-    private
-    pure
-    returns (uint256)
-  {
-    return x < y ? x : y;
-  }
-
+  // If msg.sender == incumbent, accept challenge and do the trade.
+  // If msg.sender == challenger,
+  //   check that the challenge has expired or been forfeited and return
+  //   the funds to challenger.
+  // Otherwise, revert.
   function resolve_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
     external
   {
@@ -515,9 +538,6 @@ contract Main {
     address tkr = c.challenger;
 
     Escrow storage escrow = _lookup_escrow(base, mkr, c.escrow_id);
-
-    uint256 new_escrow_unlock_at =
-      min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
 
     if (msg.sender == c.incumbent) {
       require(!c.forfeited,
@@ -536,7 +556,8 @@ contract Main {
       c.dst_amount = 0; // for clarity; redundant with later delete.
 
       escrow.beneficiary = c.incumbent;
-      escrow.unencumbered_at = new_escrow_unlock_at;
+      escrow.unencumbered_at =
+        min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
 
       assert(escrow.spent_proof == itt_hash); // TODO double check
 
@@ -546,9 +567,12 @@ contract Main {
               || escrow.state == EscrowState.Invalid/*escrow was slashed*/,
               "Challenge not ended yet");
       if (escrow.state != EscrowState.Invalid) {
+        // challenge expired, add additional lockup to give opportunity
+        // for double spend proof to be provided in the case of very
+        // short lockups.
         assert(escrow.beneficiary == c.challenger);
         assert(escrow.spent_proof == itt_hash);
-        escrow.unencumbered_at = new_escrow_unlock_at;
+        escrow.unencumbered_at = c.ends_at + LOCKUP_PERIOD_SECONDS;
       } else {
         // the escrow was slashed, funds are free to withdraw
       }
@@ -559,6 +583,7 @@ contract Main {
       c.dst_amount = 0;
       //   CR
       _credit(dst, c.challenger, amt);
+
     } else {
       // Allow proxy to call?
       require(false,
