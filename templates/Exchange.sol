@@ -283,6 +283,7 @@ contract Main {
     uint256 amount = escrow.amount;
     uint256 error_bit = amount % 2;
     // arbitrarily assign the error bit.
+    // don't really need safemath here.
     uint256 claim1_amount = amount.div(2) + error_bit;
     uint256 claim2_amount = amount.div(2);
 
@@ -306,9 +307,9 @@ contract Main {
 
 
   // Returns false if
-  //   the escrow is expired,
-  //   the escrow is already encumbered by a challenge
-  //   the escrow got slashed
+  //   1) the escrow is expired, or
+  //   2) the escrow is already encumbered by a challenge, or
+  //   3) the escrow got slashed
   function _initiate_escrow_claim(ERC20 tok, address owner, bytes32 id, uint256 unencumbered_at, address claimant, bytes32 spent_proof)
     private
     returns (bool success)
@@ -333,7 +334,13 @@ contract Main {
         return false;
       }
     } else {
-      if (escrow.spent_proof != bytes32(0) && escrow.spent_proof != spent_proof) {
+      bool should_slash =
+        // Technically the null check is redundant with
+        // the check in the previous branch.
+        escrow.spent_proof != bytes32(0) &&
+        escrow.spent_proof != spent_proof;
+
+      if (should_slash) {
         _slash_escrow(tok, owner, id, claimant);
         return false;
       }
@@ -447,7 +454,12 @@ contract Main {
     ERC20 dst = ERC20(itt.dst);
 
     uint256 unencumbered_at = block.timestamp + LOCKUP_PERIOD_SECONDS;
-    if (!_initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest)) {
+    // If the escrow is double spent, will slash.
+    // Note: This will succeed (not slash) if escrow is in withdraw
+    //   process with no existing spend proof. This seems like a bug but
+    //   could be a feature. Need to think more.
+    bool escrow_valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest)
+    if (!escrow_valid) {
       return false;
     }
 
@@ -540,26 +552,31 @@ contract Main {
     Escrow storage escrow = _lookup_escrow(base, mkr, c.escrow_id);
 
     if (msg.sender == c.incumbent) {
-      require(!c.forfeited,
+      require(!c.forfeited || escrow.state == EscrowState.Invalid/*slashed*/,
               "Already forfeited");
 
+      // TODO skip if zero
       // JE
       //   DR
       _debit(base, mkr, c.base_amount);
       //   CR
       c.base_amount = 0; // for clarity; redundant with later delete
 
+      // TODO skip if zero
       // JE
       //   DR
       _debit(dst, tkr, c.dst_amount);
       //   CR
       c.dst_amount = 0; // for clarity; redundant with later delete.
 
-      escrow.beneficiary = c.incumbent;
-      escrow.unencumbered_at =
-        min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
+      if (escrow.state != EscrowState.Invalid) {
+        // Not slashed
+        assert(escrow.spent_proof == itt_hash);
 
-      assert(escrow.spent_proof == itt_hash); // TODO double check
+        escrow.beneficiary = c.incumbent;
+        escrow.unencumbered_at =
+          min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
+      }
 
     } else if (msg.sender == c.challenger) {
 
