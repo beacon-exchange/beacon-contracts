@@ -236,7 +236,7 @@ contract Main {
     _credit(tok, address(this), amount);
 
     require(tok.transfer(msg.sender, amount),
-            "Transfer failed")
+            "Transfer failed");
   }
 
   function _lookup_escrow(ERC20 tok, address sender, bytes32 id)
@@ -315,50 +315,47 @@ contract Main {
     delete escrows[address(tok)][owner][id];
   }
 
-
-  // Returns false if
-  //   1) the escrow is expired, or
-  //   2) the escrow is already encumbered by a challenge, or
-  //   3) the escrow got slashed
-  function _initiate_escrow_claim(ERC20 tok, address owner, bytes32 id, uint256 unencumbered_at, address claimant, bytes32 spent_proof)
+  // If the escrow is already spent, slash it.
+  // Returns true iff the escrow could be encumbered:
+  //   1) the escrow is not expired, and
+  //   2) the escrow does not already have a spent proof.
+  function _supply_escrow_spend_proof(ERC20 tok, address owner, bytes32 id, uint256 unencumbered_at, address claimant, bytes32 spent_proof)
     private
     returns (bool success)
   {
-    assert(unencumbered_at > block.timestamp);
+    assert(spent_proof != bytes32(0));
+    assert(claimant != address(0));
 
     Escrow storage escrow = _lookup_escrow(tok, owner, id);
 
-    // Perhaps this should be an assert, and this validation should
-    // be performed by the caller.
     require(escrow.state != EscrowState.Invalid,
             "Escrow invalid");
-
-    /* KEY LOGIC */
 
     if (_expired(escrow.unencumbered_at)) {
       return false;
     }
-    if (spent_proof == bytes32(0)) { // Simple withdraw. No proof of ITT.
-      if (escrow.beneficiary != claimant) {
-        // Already encumbered.
-        return false;
-      }
-    } else {
-      bool should_slash =
-        // Technically the null check is redundant with
-        // the check in the previous branch.
-        escrow.spent_proof != bytes32(0) &&
-        escrow.spent_proof != spent_proof;
 
-      if (should_slash) {
-        _slash_escrow(tok, owner, id, claimant); // inline me?
-        return false;
-      }
+    bool should_slash =
+      escrow.spent_proof != bytes32(0) &&
+      escrow.spent_proof != spent_proof;
+
+    if (should_slash) {
+      _slash_escrow(tok, owner, id, claimant); // inline me?
+      return false;
     }
 
+    // implied: escrow.spent_proof == spent_proof.
+    bool already_encumbered = escrow.spent_proof != bytes32(0);
+    if (already_encumbered) {
+      assert(escrow.spent_proof == spent_proof);
+      return false;
+    }
+
+    // Perform update.
     escrow.state = EscrowState.Withdrawing;
     escrow.unencumbered_at = unencumbered_at;
     escrow.beneficiary = claimant;
+    escrow.spent_proof = spent_proof;
 
     return true;
   }
@@ -367,46 +364,18 @@ contract Main {
   function initiate_escrow_withdraw(ERC20 tok, bytes32 id)
     external
   {
+    Escrow storage escrow = _lookup_escrow(tok, msg.sender, id);
+
+    require(escrow.state == EscrowState.OnDeposit,
+            "Already encumbered");
+    assert(escrow.spent_proof == bytes32(0));
+    assert(escrow.beneficiary == address(0));
+
     uint256 unencumbered_at = block.timestamp + LOCKUP_PERIOD_SECONDS;
-    _initiate_escrow_claim(tok, msg.sender, id, unencumbered_at, msg.sender, bytes32(0));
-  }
 
-
-  // TODO bundle this logic into initiate_challenge.
-  function contest_escrow_withdraw(ITT memory itt, bytes memory mkr_sig)
-    public // SBE
-  {
-    bytes32 itt_digest = ${ref_eip712HashStruct "itt" ittTy};
-    require(ECVerify.ecverify(eip712encode(itt_digest), mkr_sig) == itt.sender,
-           "Invalid signature");
-
-    uint256 unencumbered_at = block.timestamp + itt.challenge_period_seconds;
-
-    ERC20 base = ERC20(itt.base);
-    ERC20 dst = ERC20(itt.dst);
-    bool valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, msg.sender, itt_digest);
-
-    if (valid) {
-      // Create challenge to lock funds for challenge period.
-      // Forfeiture fee owner implicitly forfeited challenge.
-      Challenge storage c = _lookup_challenge(base, dst, itt_digest);
-      assert(c.ends_at == 0);
-
-      // JE
-      //   DR
-      _debit(dst, msg.sender, itt.dst_amount);
-      // -->
-      c.ends_at = block.timestamp + itt.challenge_period_seconds;
-      c.escrow_id = itt.forfeiture_fee_id;
-      c.incumbent = itt.sender; // necessary?
-      c.challenger = msg.sender;
-      c.base_amount = 0; // NGM
-      //   CR <--
-      c.dst_amount = itt.dst_amount;
-      c.forfeited = true;
-
-    } else { // escrow got slashed.
-    }
+    escrow.state = EscrowState.Withdrawing;
+    escrow.unencumbered_at = unencumbered_at;
+    escrow.beneficiary = msg.sender;
   }
 
 
@@ -488,14 +457,14 @@ contract Main {
     ERC20 dst = ERC20(itt.dst);
 
     uint256 unencumbered_at = block.timestamp + LOCKUP_PERIOD_SECONDS;
-    // If the escrow is double spent, will slash.
-    // Note: This will succeed (not slash) if escrow is in withdraw
-    //   process with no existing spend proof. This seems like a bug but
-    //   could be a feature. Need to think more.
-    bool escrow_valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest);
-    if (!escrow_valid) {
+    Escrow storage escrow = _lookup_escrow(base, itt.sender, itt.forfeiture_fee_id);
+    if (escrow.state != EscrowState.OnDeposit/*can_trade*/) {
       return false;
     }
+    // If the escrow is double spent, will slash and return false.
+    // If escrow is already challenged, will return false.
+    bool escrow_valid = _supply_escrow_spend_proof(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest);
+    assert(escrow_valid); // should follow from can_trade == true
 
     // JE
     //   DR
@@ -514,6 +483,7 @@ contract Main {
 
   function initiate_challenge(ITT memory itt, bytes memory mkr_sig)
     public // SBE
+    returns (bool success)
   {
     address challenger = msg.sender;
 
@@ -523,33 +493,64 @@ contract Main {
 
     ERC20 base = ERC20(itt.base);
     ERC20 dst = ERC20(itt.dst);
+
     Challenge storage c = _lookup_challenge(base, dst, itt_digest);
+    Escrow storage escrow = _lookup_escrow(base, itt.sender, itt.forfeiture_fee_id);
+
     require(c.ends_at == 0,
             "ITT already challenged");
 
     uint256 ends_at = block.timestamp + itt.challenge_period_seconds;
 
-    /* assumption: forfeiture fee token is itt.base. */
-    bool valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, ends_at, challenger, itt_digest);
-    if (valid) {
-      // JE
-      //   DR1
-      _debit(base, itt.sender, itt.base_amount);
-      //   DR2
-      _debit(dst, challenger, itt.dst_amount);
+    Deposit storage dpst = _lookup_deposit(base, itt.sender);
 
-      //   -->
-      c.ends_at = ends_at;
-      c.escrow_id = itt.forfeiture_fee_id;
-      c.incumbent = itt.sender;
-      c.challenger = challenger;
-      //   CR1 <--
-      c.base_amount = itt.base_amount;
-      //   CR2 <--
-      c.dst_amount = itt.dst_amount;
-      c.forfeited = false; // NGM
+    /* assumption: forfeiture fee token is itt.base. */
+    // must come before _supply_escrow_spend which is mutating.
+    bool can_trade =
+      escrow.state == EscrowState.OnDeposit &&
+      dpst.deposit_balance >= itt.base_amount;
+
+
+    /** Create challenge **/
+
+    // First, lock up the escrow by supplying a proof.
+    // If the escrow is double spent, will slash and return false.
+    // If escrow is withdrawing or challenged, will return false.
+    bool valid = _supply_escrow_spend_proof(base, itt.sender, itt.forfeiture_fee_id, ends_at, challenger, itt_digest);
+    if (!valid) {
+      return false;
     }
+
+    // Initiate challenge struct
+    c.ends_at = ends_at;
+    c.escrow_id = itt.forfeiture_fee_id;
+    c.incumbent = itt.sender; // optimization: could omit if forfeited
+    c.challenger = challenger;
+
+    // Always lock challenger funds.
+    // JE
+    //   DR
+    _debit(dst, challenger, itt.dst_amount);
+    //   CR
+    c.dst_amount = itt.dst_amount;
+
+    if (!can_trade) {
+      // Simple withdraw or insufficient funds, implicit
+      // reject of all challenges.
+      c.forfeited = true;
+
+    } else {
+      // Lock up incumbent funds, full challenge initiated.
+      // JE
+      //   DR
+      _debit(base, itt.sender, itt.base_amount);
+      //   CR
+      c.base_amount = itt.base_amount;
+    }
+
+    return true;
   }
+
 
   function forfeit_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
     external
@@ -594,9 +595,10 @@ contract Main {
     require(msg.sender == c.incumbent || msg.sender == c.challenger,
             "Not authorized");
 
-    Escrow storage escrow = _lookup_escrow(base, mkr, c.escrow_id);
+    Escrow storage escrow = _lookup_escrow(base, c.incumbent, c.escrow_id);
 
     if (escrow.state != EscrowState.Invalid) {
+      // not slashed
       assert(escrow.beneficiary == c.challenger);
       assert(escrow.spent_proof == itt_hash);
     }
