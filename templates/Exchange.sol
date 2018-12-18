@@ -449,7 +449,6 @@ contract Main {
     bytes32 poi_digest = ${ref_eip712HashStruct "poi" poiTy};
 
     // require taker signature for POI hash
-    // TODO consider wrapping in 'Accept' struct
     require(ECVerify.ecverify(eip712encode(poi_digest), tkr_sig) == poi.sender,
            "Invalid signature");
 
