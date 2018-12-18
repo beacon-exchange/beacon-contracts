@@ -6,6 +6,15 @@ pragma experimental ABIEncoderV2;
 import './SafeMath.sol';
 import './ECVerify.sol';
 
+
+/***** Abbreviations ***
+ * NGM: Rely on net gas metering for sstore optimization
+ * SBE: Should be marked external but ABIEncoderV2 does not allow
+          calldata structs
+ * SBP: Should be pure but Solidity cannot detect no read
+ * SBC: Should be constant but structs cannot be constant
+ *****/
+
 // No way to subclass, e.g. newtypes like interface BaseToken extends ERC20
 interface ERC20 {
   function totalSupply() external view returns (uint supply);
@@ -60,7 +69,7 @@ contract Main {
   ${def_struct eip712DomainTy}
   ${def_eip712StructTypeHash eip712DomainTy}
 
-  // should be a constant
+  // SBC
   function eip712DomainSeparator() public view returns (bytes32) {
     string memory ${ref_struct_member "eip712Domain" "name"} =
       "Beacon Exchange";
@@ -108,10 +117,8 @@ contract Main {
   struct Challenge {
     uint256/*timestamp*/ ends_at;
     bytes32 escrow_id;
-    // incumbent and challenger could pass as function
-    // param every time to save sstore
-    address incumbent;
-    address challenger;
+    address incumbent; // perhaps rename to maker
+    address challenger; // perhaps rename to taker
     uint256 base_amount;
     uint256 dst_amount;
     bool forfeited; // optimization: could compress this into ends_at
@@ -126,6 +133,7 @@ contract Main {
 
   mapping(address/*token*/ => mapping(address/*user*/ => Deposit)) deposits;
 
+  // Only used to clarify balance sheet invariants, could optimize out.
   mapping(address/*token*/ => uint256) balances;
 
   mapping(address/*base*/ => mapping(address/*dst*/ => mapping(bytes32/*itt hash*/ => Challenge))) challenges;
@@ -164,7 +172,7 @@ contract Main {
 
   function _lookup_deposit(ERC20 tok, address sender)
     private
-    view // calculating the key should be pure but alas
+    view // SBP
     returns (Deposit storage)
   {
     return deposits[address(tok)][sender];
@@ -172,7 +180,7 @@ contract Main {
 
   function _lookup_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
     private
-    view
+    view // SBP
     returns (Challenge storage)
   {
     return challenges[address(base)][address(dst)][itt_hash];
@@ -214,6 +222,7 @@ contract Main {
     //   CR
     _credit(tok, msg.sender, amount);
 
+    // TODO require
     tok.transferFrom(msg.sender, address(this), amount);
   }
 
@@ -226,7 +235,7 @@ contract Main {
     //   CR
     _credit(tok, address(this), amount);
 
-    tok.transfer(msg.sender, amount);
+    tok.transfer(msg.sender, amount); // TODO require
   }
 
   function _lookup_escrow(ERC20 tok, address sender, bytes32 id)
@@ -290,7 +299,7 @@ contract Main {
     // JE
     assert(claim1_amount + claim2_amount == amount);
     //   DR
-    escrow.amount = 0; // redundant with later delete
+    escrow.amount = 0; // redundant with later delete - NGM
     //   CR
     _credit(tok, escrow.beneficiary, claim1_amount);
     _credit(tok, claimant, claim2_amount);
@@ -298,7 +307,7 @@ contract Main {
     // JE
     assert(escrow.buffer_balance == amount);
     //   DR
-    escrow.buffer_balance = 0; // redundant with later delete
+    escrow.buffer_balance = 0; // redundant with later delete - NGm
     //   CR
     _credit(tok, BURN_FUND, amount);
 
@@ -362,9 +371,9 @@ contract Main {
   }
 
 
-  // Could optimize params size
+  // TODO bundle this logic into initiate_challenge.
   function contest_escrow_withdraw(ITT memory itt, bytes memory mkr_sig)
-    public // should be external but no struct in calldata
+    public // SBE
   {
     bytes32 itt_digest = ${ref_eip712HashStruct "itt" ittTy};
     require(ECVerify.ecverify(eip712encode(itt_digest), mkr_sig) == itt.sender,
@@ -377,7 +386,8 @@ contract Main {
     bool valid = _initiate_escrow_claim(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, msg.sender, itt_digest);
 
     if (valid) {
-      // Create pre-forfeited challenge to lock funds for challenge period.
+      // Create challenge to lock funds for challenge period.
+      // Forfeiture fee owner implicitly forfeited challenge.
       Challenge storage c = _lookup_challenge(base, dst, itt_digest);
       assert(c.ends_at == 0);
 
@@ -389,7 +399,7 @@ contract Main {
       c.escrow_id = itt.forfeiture_fee_id;
       c.incumbent = itt.sender; // necessary?
       c.challenger = msg.sender;
-      c.base_amount = 0; // could omit
+      c.base_amount = 0; // NGM
       //   CR <--
       c.dst_amount = itt.dst_amount;
       c.forfeited = true;
@@ -420,13 +430,13 @@ contract Main {
 
     // JE
     //   DR
-    escrow.amount = 0;
+    escrow.amount = 0; // NGM - for clarity; redundant with later delete
     //   CR
     _credit(tok, beneficiary, amount);
 
     // JE
     //   DR
-    escrow.buffer_balance = 0;
+    escrow.buffer_balance = 0; // NGM - for clarity; redundant with later delete
     //   CR
     _credit(tok, owner, buffer_amount);
 
@@ -439,14 +449,14 @@ contract Main {
 
   // Passing structs via calldata fails solc with unimplemented error
   // function exchange(ITT calldata itt, POI calldata poi,...)
-  // Alternative: exchange(ITT memory itt,...) public
-  // which requires ABIEncoderV2 instead of asm (pick your poison!)
+  // exchange(ITT memory itt,...) public
+  // requires ABIEncoderV2 instead of asm (pick your poison!)
   function exchange(
     ITT memory itt,
     POI memory poi,
     bytes memory tkr_sig
     )
-    public //external
+    public // SBE
     returns (bool success)
   {
     // check based on domain separator?
@@ -502,7 +512,7 @@ contract Main {
   }
 
   function initiate_challenge(ITT memory itt, bytes memory mkr_sig)
-    public/*should be external*/
+    public // SBE
   {
     address challenger = msg.sender;
 
@@ -526,6 +536,7 @@ contract Main {
       _debit(base, itt.sender, itt.base_amount);
       //   DR2
       _debit(dst, challenger, itt.dst_amount);
+
       //   -->
       c.ends_at = ends_at;
       c.escrow_id = itt.forfeiture_fee_id;
@@ -535,7 +546,7 @@ contract Main {
       c.base_amount = itt.base_amount;
       //   CR2 <--
       c.dst_amount = itt.dst_amount;
-      c.forfeited = false; // could omit to save sstore
+      c.forfeited = false; // NGM
     }
   }
 
@@ -552,6 +563,8 @@ contract Main {
 
     c.forfeited = true;
 
+    // Rollback incumbent funds only, challenger must stay locked for
+    // duration of challenge.
     // JE
     uint256 base_amount = c.base_amount;
     //   DR
@@ -560,86 +573,85 @@ contract Main {
     _credit(base, c.incumbent, base_amount);
   }
 
-  // If msg.sender == incumbent, accept challenge and do the trade.
-  // If msg.sender == challenger,
-  //   check that the challenge has expired or been forfeited and return
-  //   the funds to challenger.
-  // Otherwise, revert.
-  function resolve_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
+  // If the challenge is still available
+  //    (i.e. escrow unslashed and challenge not expired) and
+  //    msg.sender is the incumbent,
+  //    accept challenge and do the trade.
+  // If the challenge is unavailable,
+  //   check that the challenge has expired or has been forfeited and
+  //   return funds to parties.
+  function accept_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
     external
   {
     // optimization opportunity: if read-only, just make copy.
     Challenge storage c = _lookup_challenge(base, dst, itt_hash);
 
-    address mkr = c.incumbent;
-    address tkr = c.challenger;
+    require(c.ends_at != 0,
+            "Challenge invalid");
+
+    // Allow proxy to call?
+    require(msg.sender == c.incumbent || msg.sender == c.challenger,
+            "Not authorized");
 
     Escrow storage escrow = _lookup_escrow(base, mkr, c.escrow_id);
 
-    if (msg.sender == c.incumbent) {
-      require(!c.forfeited || escrow.state == EscrowState.Invalid/*slashed*/,
-              "Already forfeited");
+    if (escrow.state != EscrowState.Invalid) {
+      assert(escrow.beneficiary == c.challenger);
+      assert(escrow.spent_proof == itt_hash);
+    }
 
-      // TODO if challenge has expired, trade no longer possible.
+    bool no_trade =
+      _expired(c.ends_at)
+      || escrow.state == EscrowState.Invalid/*slashed*/;
 
-      // TODO skip if zero
+    if (no_trade) {
+
       // JE
       //   DR
-      _debit(base, mkr, c.base_amount);
+      _debit(base, c.incumbent, c.base_amount);
       //   CR
-      c.base_amount = 0; // for clarity; redundant with later delete
+      c.base_amount = 0; // NGM - for clarity; redundant with later delete
 
-      // TODO skip if zero
       // JE
       //   DR
-      _debit(dst, tkr, c.dst_amount);
+      _debit(dst, c.challenger, c.dst_amount);
       //   CR
-      c.dst_amount = 0; // for clarity; redundant with later delete.
+      c.dst_amount = 0; // NGM - for clarity; redundant with later delete.
 
       if (escrow.state != EscrowState.Invalid) {
-        // Not slashed
-        assert(escrow.spent_proof == itt_hash);
-
-        escrow.beneficiary = c.incumbent;
-        escrow.unencumbered_at =
-          min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
-      }
-
-    } else if (msg.sender == c.challenger) {
-
-      require(_expired(c.ends_at)
-              || escrow.state == EscrowState.Invalid/*escrow was slashed*/,
-              "Challenge not ended yet");
-      if (escrow.state != EscrowState.Invalid) {
-        // Challenge expired. Add additional lockup to give opportunity
-        // for double spend proof to be provided in the case of very
-        // short lockups.
-        assert(escrow.beneficiary == c.challenger);
-        assert(escrow.spent_proof == itt_hash);
+        // Challenge expired. Add additional escrow lockup to give
+        // opportunity for double spend proof to be provided in the
+        // case of very short lockups.
         escrow.unencumbered_at = c.ends_at + LOCKUP_PERIOD_SECONDS;
-      } else {
-        // the escrow was slashed, funds are free to withdraw
       }
+
+    } else {
+
+      // Only the incumbent can authorize trade
+      require(msg.sender == c.incumbent,
+              "Not authorized to accept challenge");
+      require(!c.forfeited,
+              "Challenge already forfeited");
 
       // JE
       uint256 dst_amt = c.dst_amount;
       //   DR
-      c.dst_amount = 0;
+      c.dst_amount = 0; // NGM
       //   CR
       _credit(dst, c.challenger, dst_amt);
-
 
       // JE
       uint256 base_amt = c.base_amount;
       //   DR
-      c.base_amount = 0;
+      c.base_amount = 0; // NGM
       //   CR
       _credit(base, c.incumbent, base_amt);
 
-    } else {
-      // Allow proxy to call?
-      require(false,
-              "Not authorized");
+      if (escrow.state != EscrowState.Invalid) {
+        escrow.beneficiary = c.incumbent;
+        escrow.unencumbered_at =
+          min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
+      }
     }
 
     delete challenges[address(base)][address(dst)][itt_hash];
