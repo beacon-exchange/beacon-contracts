@@ -222,8 +222,8 @@ contract Main {
     //   CR
     _credit(tok, msg.sender, amount);
 
-    // TODO require
-    tok.transferFrom(msg.sender, address(this), amount);
+    require(tok.transferFrom(msg.sender, address(this), amount),
+            "Transfer failed");
   }
 
   function withdraw(ERC20 tok, uint256 amount)
@@ -235,7 +235,8 @@ contract Main {
     //   CR
     _credit(tok, address(this), amount);
 
-    tok.transfer(msg.sender, amount); // TODO require
+    require(tok.transfer(msg.sender, amount),
+            "Transfer failed")
   }
 
   function _lookup_escrow(ERC20 tok, address sender, bytes32 id)
