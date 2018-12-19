@@ -495,6 +495,7 @@ contract Main {
     return true;
   }
 
+
   function initiate_challenge(ITT memory itt, bytes memory mkr_sig)
     public // SBE
     returns (bool success)
@@ -532,7 +533,7 @@ contract Main {
     // If escrow is withdrawing or challenged, will return false.
     bool valid = _supply_escrow_spend_proof(base, itt.sender, itt.forfeiture_fee_id, ends_at, challenger, itt_digest);
     if (!valid) {
-      return false;
+      return false; // don't roll back slashing
     }
 
     // Initiate challenge struct
@@ -548,19 +549,18 @@ contract Main {
     //   CR
     c.dst_amount = itt.dst_amount;
 
-    // TODO flip branches for clarity
-    if (!can_trade) {
-      // Simple withdraw or insufficient funds, implicit
-      // reject of all challenges.
-      c.forfeited = true;
-
-    } else {
+    if (can_trade) {
       // Lock up incumbent funds, full challenge initiated.
       // JE
       //   DR
       _debit(base, itt.sender, itt.base_amount);
       //   CR
       c.base_amount = itt.base_amount;
+
+    } else {
+      // Simple withdraw or insufficient funds, implicit
+      // reject of all challenges.
+      c.forfeited = true;
     }
 
     return true;
