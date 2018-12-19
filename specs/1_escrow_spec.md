@@ -42,13 +42,15 @@ this more convenient for the user using Merkle proofs but it's more
 technically difficult so let's leave that for a future version).
 
 Now, the rules are fairly simple.
-1a. If Alice wants to withdraw her forfeiture fee, she may do so, but she must
-  wait out the withdrawal period, during which anybody may make a claim against
-  that particular FF. A claim consists of a signed ITT referencing that FF,
-  which (along with her initiating a withdrawal) proves that Alice has
-  forfeited (spent) the FF. If a claim is submitted, the Beacon contract
-  must treat it like a challenge where Alice automatically forfeited:
-  1b. The claimant becomes the beneficiary of the FF, must lock up the amount
+1. If Alice wants to withdraw a FF, she may initiate a withdrawal of the FF,
+  in which
+  * She must wait out the withdrawal period, during which anybody may make a
+  claim against that particular FF. A claim consists of a signed ITT
+  referencing that FF, which (along with her initiating a withdrawal) proves
+  that Alice has forfeited (spent) the FF. If a claim is submitted, the
+  Beacon contract must treat it like a challenge where Alice automatically
+  forfeited, in which
+  * The claimant becomes the beneficiary of the FF, must lock up the amount
   of trading funds and wait out the challenge period specified in the ITT.
   Once the challenge period is over, the claimant may withdraw their trading
   assets which were locked for the challenge but must additionally wait out

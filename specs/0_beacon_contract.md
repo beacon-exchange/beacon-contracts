@@ -99,6 +99,7 @@ struct POI {
   bytes32 itt_hash; // The hash of the ITT, calculated with the `hashStruct` function defined in EIP712
   bytes32 nonce; // User-defined nonce to prevent replay attacks. # Revisit as this might not actually be necessary.
 }
+```
 
 ## Interface
 
