@@ -8,6 +8,7 @@ import './ECVerify.sol';
 
 
 /***** Abbreviations ***
+ * SV: SECURITY VULNERABILITY
  * NGM: Rely on net gas metering for sstore optimization
  * SBE: Should be marked external but ABIEncoderV2 does not allow
           calldata structs
@@ -515,6 +516,7 @@ contract Main {
     require(c.ends_at == 0,
             "ITT already challenged");
 
+    // TODO OVERFLOW CHECK SV
     uint256 ends_at = block.timestamp + itt.challenge_period_seconds;
 
     Deposit storage dpst = _lookup_deposit(base, itt.sender);
