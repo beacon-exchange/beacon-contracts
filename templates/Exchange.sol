@@ -594,13 +594,61 @@ contract Main {
   //    (i.e. escrow unslashed and challenge not expired) and
   //    msg.sender is the incumbent,
   //    accept challenge and do the trade.
+  function accept_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
+    external
+  {
+    // optimization opportunity: if read-only, just make copy.
+    Challenge storage c = _lookup_challenge(base, dst, itt_hash);
+
+    Escrow storage escrow = _lookup_escrow(base, c.incumbent, c.escrow_id);
+
+    require(c.ends_at != 0,
+            "Challenge invalid");
+
+    require(msg.sender == c.incumbent,
+           "Not authorized");
+
+    require(!_expired(c.ends_at),
+            "Challenge expired");
+
+    require(escrow.state != EscrowState.Invalid,
+           "Forfeiture fee slashed, can't trade");
+
+    require(!c.forfeited,
+            "Challenge already forfeited");
+
+    assert(escrow.beneficiary == c.challenger);
+    assert(escrow.spent_proof == itt_hash);
+
+    // swap assets
+
+    // JE
+    uint256 dst_amt = c.dst_amount;
+    //   DR
+    c.dst_amount = 0; // NGM
+    //   CR
+    _credit(dst, c.challenger, dst_amt);
+
+    // JE
+    uint256 base_amt = c.base_amount;
+    //   DR
+    c.base_amount = 0; // NGM
+    //   CR
+    _credit(base, c.incumbent, base_amt);
+
+    // Do ordinary withdrawal process for escrow funds
+    escrow.beneficiary = c.incumbent;
+    escrow.unencumbered_at =
+      min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
+
+    delete challenges[address(base)][address(dst)][itt_hash];
+  }
+
+
   // If the challenge is unavailable,
   //   check that the challenge has expired or has been forfeited and
   //   return funds to parties.
-  // TODO split into two functions for clarity and UX:
-  // `accept_challenge` (could effect trade) and `unlock_challenge`
-  // (could roll back funds)
-  function resolve_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
+  function return_challenge_funds(ERC20 base, ERC20 dst, bytes32 itt_hash)
     external
   {
     // optimization opportunity: if read-only, just make copy.
@@ -609,71 +657,38 @@ contract Main {
     require(c.ends_at != 0,
             "Challenge invalid");
 
-    // Allow proxy to call?
+    Escrow storage escrow = _lookup_escrow(base, c.incumbent, c.escrow_id);
+
     require(msg.sender == c.incumbent || msg.sender == c.challenger,
             "Not authorized");
 
-    Escrow storage escrow = _lookup_escrow(base, c.incumbent, c.escrow_id);
+    bool slashed = escrow.state == EscrowState.Invalid;
+    require(_expired(c.ends_at) || slashed);
 
-    if (escrow.state != EscrowState.Invalid) {
-      // not slashed
+    if (!slashed) {
       assert(escrow.beneficiary == c.challenger);
       assert(escrow.spent_proof == itt_hash);
     }
 
-    bool no_trade =
-      _expired(c.ends_at)
-      || escrow.state == EscrowState.Invalid/*slashed*/;
+    // return funds.
 
-    // TODO flip branches for clarity
-    if (no_trade) {
+    // JE
+    //   DR
+    _debit(base, c.incumbent, c.base_amount);
+    //   CR
+    c.base_amount = 0; // NGM - for clarity; redundant with later delete
 
-      // JE
-      //   DR
-      _debit(base, c.incumbent, c.base_amount);
-      //   CR
-      c.base_amount = 0; // NGM - for clarity; redundant with later delete
+    // JE
+    //   DR
+    _debit(dst, c.challenger, c.dst_amount);
+    //   CR
+    c.dst_amount = 0; // NGM - for clarity; redundant with later delete.
 
-      // JE
-      //   DR
-      _debit(dst, c.challenger, c.dst_amount);
-      //   CR
-      c.dst_amount = 0; // NGM - for clarity; redundant with later delete.
-
-      if (escrow.state != EscrowState.Invalid) {
-        // Challenge expired. Add additional escrow lockup to give
-        // opportunity for double spend proof to be provided in the
-        // case of very short lockups.
-        escrow.unencumbered_at = c.ends_at + LOCKUP_PERIOD_SECONDS;
-      }
-
-    } else {
-
-      // Only the incumbent can authorize trade
-      require(msg.sender == c.incumbent,
-              "Not authorized to accept challenge");
-      require(!c.forfeited,
-              "Challenge already forfeited");
-
-      // JE
-      uint256 dst_amt = c.dst_amount;
-      //   DR
-      c.dst_amount = 0; // NGM
-      //   CR
-      _credit(dst, c.challenger, dst_amt);
-
-      // JE
-      uint256 base_amt = c.base_amount;
-      //   DR
-      c.base_amount = 0; // NGM
-      //   CR
-      _credit(base, c.incumbent, base_amt);
-
-      if (escrow.state != EscrowState.Invalid) {
-        escrow.beneficiary = c.incumbent;
-        escrow.unencumbered_at =
-          min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
-      }
+    if (!slashed) {
+      // Add additional escrow lockup to give
+      // opportunity for double spend proof to be provided in the
+      // case of very short lockups.
+      escrow.unencumbered_at = c.ends_at + LOCKUP_PERIOD_SECONDS;
     }
 
     delete challenges[address(base)][address(dst)][itt_hash];
