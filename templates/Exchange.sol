@@ -404,6 +404,7 @@ contract Main {
     address beneficiary = escrow.beneficiary;
 
     // Allow proxy to call?
+    // TODO maybe allow owner to call
     require(msg.sender == beneficiary,
             "Not the beneficiary");
 
@@ -596,7 +597,7 @@ contract Main {
   // If the challenge is unavailable,
   //   check that the challenge has expired or has been forfeited and
   //   return funds to parties.
-  // Consider splitting into two functions for clarity and UX:
+  // TODO split into two functions for clarity and UX:
   // `accept_challenge` (could effect trade) and `unlock_challenge`
   // (could roll back funds)
   function resolve_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
