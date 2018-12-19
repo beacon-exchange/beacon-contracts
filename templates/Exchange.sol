@@ -13,6 +13,11 @@ import './ECVerify.sol';
           calldata structs
  * SBP: Should be pure but Solidity cannot detect no read
  * SBC: Should be constant but structs cannot be constant
+ * JE: Journal entry. A set of debits combined with a set of balancing credits.
+ * DR: The debit side of a journal entry
+ * CR: The credit side of a journal entry
+ * COO: Could optimize out
+ * SOO: Should optimize out
  *****/
 
 // No way to subclass, e.g. newtypes like interface BaseToken extends ERC20
@@ -104,24 +109,24 @@ contract Main {
   // escrow balance must go through lockup process to withdraw to allow
   // for challenges.
   struct Escrow {
-    EscrowState state; // this can probably be inferred by unencumbered_at
+    EscrowState state; // COO this can probably be inferred by unencumbered_at
     uint256/*timestamp*/ unencumbered_at;
     bytes32 spent_proof; // non-null if proof of spend has been seen
     address beneficiary;
     uint256 amount;
     // Never accessed except for slashing in case of double spend proof
     // Can be inferred from amount.
-    uint256 buffer_balance;
+    uint256 buffer_balance; // COO
   }
 
   struct Challenge {
-    uint256/*timestamp*/ ends_at;
+    uint256/*timestamp*/ ends_at; // COO
     bytes32 escrow_id;
-    address incumbent; // perhaps rename to maker
-    address challenger; // perhaps rename to taker
+    address incumbent; // SOO should be part of key. Perhaps rename to maker
+    address challenger; // SOO should be part of key. Perhaps rename to taker
     uint256 base_amount;
     uint256 dst_amount;
-    bool forfeited; // optimization: could compress this into ends_at
+    bool forfeited; // COO: could compress this into ends_at
   }
 
   struct Deposit {
@@ -129,14 +134,23 @@ contract Main {
   }
 
 
-  mapping(address/*token*/ => mapping(address/*user*/ => mapping(bytes32 => Escrow))) escrows;
+  mapping(address/*token*/ =>
+          mapping(address/*user*/ =>
+                  mapping(bytes32/*ID*/ =>
+                          Escrow))) escrows;
 
-  mapping(address/*token*/ => mapping(address/*user*/ => Deposit)) deposits;
+  mapping(address/*token*/ =>
+          mapping(address/*user*/ =>
+                  Deposit)) deposits;
 
-  // Only used to clarify balance sheet invariants, could optimize out.
-  mapping(address/*token*/ => uint256) balances;
+  // COO Only used to clarify balance sheet invariants
+  mapping(address/*token*/ =>
+          uint256) balances;
 
-  mapping(address/*base*/ => mapping(address/*dst*/ => mapping(bytes32/*itt hash*/ => Challenge))) challenges;
+  mapping(address/*base*/ =>
+          mapping(address/*dst*/ =>
+                  mapping(bytes32/*itt hash*/ =>
+                          Challenge))) challenges;
 
 
   function() external {
@@ -308,7 +322,7 @@ contract Main {
     // JE
     assert(escrow.buffer_balance == amount);
     //   DR
-    escrow.buffer_balance = 0; // redundant with later delete - NGm
+    escrow.buffer_balance = 0; // redundant with later delete - NGM
     //   CR
     _credit(tok, BURN_FUND, amount);
 
@@ -390,7 +404,6 @@ contract Main {
     address beneficiary = escrow.beneficiary;
 
     // Allow proxy to call?
-    // FIXME pass sender as param
     require(msg.sender == beneficiary,
             "Not the beneficiary");
 
@@ -460,6 +473,7 @@ contract Main {
     if (escrow.state != EscrowState.OnDeposit/*can_trade*/) {
       return false;
     }
+
     // If the escrow is double spent, will slash and return false.
     // If escrow is already challenged, will return false.
     bool escrow_valid = _supply_escrow_spend_proof(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest);
@@ -533,6 +547,7 @@ contract Main {
     //   CR
     c.dst_amount = itt.dst_amount;
 
+    // TODO flip branches for clarity
     if (!can_trade) {
       // Simple withdraw or insufficient funds, implicit
       // reject of all challenges.
@@ -581,7 +596,10 @@ contract Main {
   // If the challenge is unavailable,
   //   check that the challenge has expired or has been forfeited and
   //   return funds to parties.
-  function accept_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
+  // Consider splitting into two functions for clarity and UX:
+  // `accept_challenge` (could effect trade) and `unlock_challenge`
+  // (could roll back funds)
+  function resolve_challenge(ERC20 base, ERC20 dst, bytes32 itt_hash)
     external
   {
     // optimization opportunity: if read-only, just make copy.
@@ -606,6 +624,7 @@ contract Main {
       _expired(c.ends_at)
       || escrow.state == EscrowState.Invalid/*slashed*/;
 
+    // TODO flip branches for clarity
     if (no_trade) {
 
       // JE
