@@ -639,8 +639,7 @@ contract Main {
 
     // Do ordinary withdrawal process for escrow funds
     escrow.beneficiary = c.incumbent;
-    escrow.unencumbered_at =
-      min(block.timestamp, c.ends_at) + LOCKUP_PERIOD_SECONDS;
+    escrow.unencumbered_at = block.timestamp + LOCKUP_PERIOD_SECONDS;
 
     delete challenges[address(base)][address(dst)][itt_hash];
   }
