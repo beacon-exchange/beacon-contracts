@@ -186,9 +186,9 @@ The Beacon contract must expose the following interface.
   5) Unless the escrow was already slashed, extend the lockup for the
     escrow by `LOCKUP_PERIOD_SECONDS`.
 
-*Future areas of expansion/improvement:
+<i>Future areas of expansion/improvement:
   1) Be more consistent in terminology vis a vis escrow/forfeiture fees
   2) Partial fills
   3) Account model for forfeiture fees instead of spent/unspent
   4) Don't require deposit/withdraw to be separate steps (although more external call risk)
-  *
+  </i>
