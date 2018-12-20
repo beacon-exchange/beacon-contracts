@@ -516,8 +516,7 @@ contract Main {
     require(c.ends_at == 0,
             "ITT already challenged");
 
-    // TODO OVERFLOW CHECK SV
-    uint256 ends_at = block.timestamp + itt.challenge_period_seconds;
+    uint256 ends_at = block.timestamp.add(itt.challenge_period_seconds);
 
     Deposit storage dpst = _lookup_deposit(base, itt.sender);
 
