@@ -101,19 +101,94 @@ struct POI {
 }
 ```
 
+`LOCKUP_PERIOD_SECONDS` is a constant defined to be 600 seconds. It is the
+minimum time a forfeiture fee must be locked after deposit, to give
+participants opportunity to prove dishonesty.
+
 ## Interface
 
 The Beacon contract must expose the following interface.
 
-1) Deposit ERC20 token
-  - signature: deposit(address token, uint256 amount)
-  - User balance must increase by `amount`.
-  - The token is assumed to be a valid ERC20 token.
-  - If the external call to transferFrom fails, the transaction must revert.
-2) Withdraw ERC20 token
-  - signature: withdraw(address token, uint256 amount)
-  - User balance must be >= the amount to withdraw, and must be decreased by
+- Deposit ERC20 token
+  1) signature: `deposit(address token, uint256 amount)`
+  2) User balance must increase by `amount`.
+  3) The token is assumed to be a valid ERC20 token.
+  4) If the external call to transferFrom fails, the transaction must revert.
+- Withdraw ERC20 token
+  1) signature: `withdraw(address token, uint256 amount)`
+  2) User balance must be >= the amount to withdraw, and must be decreased by
     `amount`.
-  - If the external call to transfer fails, the transaction must revert.
+  3) If the external call to transfer fails, the transaction must revert.
+- Deposit forfeiture fee *should rename to deposit escrow*
+  1) signature: `deposit_forfeiture_fee(address token, uint256 amount)`
+  2) Must allocate a new UUID to be used as a reference for this forfeiture
+    fee.
+  3) Must set aside `amount*2` of user balance to forfeiture fee and buffer
+    balance, which are now encumbered by lock up rules.
+- Initiate forfeiture fee withdrawal
+  1) signature: `initiate_escrow_withdraw(address token, bytes32 id)`
+  2) Must mark the escrow as being withdrawn with no spend proof.
+  3) Must mark the escrow beneficiary as the owner of the escrow.
+  4) The escrow must not be withdrawable for `LOCKUP_PERIOD_SECONDS`.
+- Finalize forfeiture fee withdrawal
+  1) signature: `finalize_escrow_withdraw(address token, bytes32 id)`
+  2) If the escrow is not double spent, the escrow beneficiary is
+    `msg.sender`, and the escrow is no longer locked, credit
+    the user with the full amount of the escrow (forfeiture fee +
+    buffer balance).
+- Exchange assets
+  1) signature: `exchange(ITT itt, POI poi, bytes[65] tkr_sig)`
+  2) Must ensure the ITT and POI are valid and unforged
+    - `itt.sender == msg.sender`
+    - `poi.itt_hash == hashStruct(itt)`
+      (where `hashStruct` is defined by EIP712)
+    - `tkr_sig` is the EIP712 signature of `poi` by `poi.sender`
+  3) Must ensure the ITT references a valid, unspent forfeiture fee.
+    - If the forfeiture fee is invalid, do not proceed with the exchange
+    - If the forfeiture fee is already spent, do not proceed,
+      and additionally, slash the forfeiture fee.
+  4) Must ensure both parties have sufficient funds to trade.
+    - If either party does not have sufficient funds,
+      do not proceed with the exchange.
+- Challenge an ITT
+  1) signature: `initiate_challenge(ITT itt, bytes[65] mkr_sig)`
+  2) Must ensure `mkr_sig` is the EIP712 signature of `itt` by `itt.sender`.
+  3) Must ensure the ITT references a valid, unspent forfeiture fee.
+    - If the forfeiture fee is invalid, do not proceed with the challenge.
+    - If the forfeiture fee is already spent, do not proceed,
+      and additionally, slash the forfeiture fee.
+  3) Must ensure `msg.sender` has `itt.dst_amount` of assets, and lock them.
+  4) Must ensure `itt.sender` has not initiated a withdrawal of the forfeiture
+    fee and that they have sufficient assets to trade.
+    - If not, `itt.sender` automatically forfeits. Assign the beneficiary of
+      the forfeiture fee to be the challenger, and lock up the challenger's
+      funds for the duration of the challenge period.
+- Forfeit a challenge
+  1) signature: `forfeit_challenge(address base, address dst, bytes32 itt_hash)`
+  2) Must ensure `msg.sender` is the `itt.sender` in the challenge
+  3) Must return `base` funds to `msg.sender`
+  4) Challenger funds must remain locked until the challenge expires
+- Accept a challenge
+  1) signature: `accept_challenge(address base, address dst, bytes32 itt_hash)`
+  2) Must ensure `msg.sender` is the `itt.sender` of the challenge
+  3) If the challenge is not expired or forfeited, and the escrow has not been
+  slashed, exchange assets.
+    - As in a successful call to `exchange`, the beneficiary of the
+      forfeiture fee is reassigned to be the `itt.sender`, and is locked
+      for an additional `LOCKUP_PERIOD_SECONDS`.
+- Return challenge funds
+  1) signature: `return_challenge_funds(address base, address dst, bytes32 itt_hash)`
+  2) Must ensure `msg.sender` is the `itt.sender` or `poi.sender` of the challenge.
+  3) Must ensure the challenge expired or the escrow was slashed
+    - (If the `itt.sender` wishes to get their funds back without one of these
+        conditions holding, they should call `forfeit_challenge`.)
+  4) Must return both sets of assets to their original owners
+  5) Unless the escrow was already slashed, extend the lockup for the
+    escrow by `LOCKUP_PERIOD_SECONDS`.
 
-*To be continued*
+*Future areas of expansion/improvement:
+  1) Be more consistent in terminology vis a vis escrow/forfeiture fees
+  2) Partial fills
+  3) Account model for forfeiture fees instead of spent/unspent
+  4) Don't require deposit/withdraw to be separate steps (although more external call risk)
+  *

@@ -18,7 +18,7 @@ severe.
 We should put forfeiture fees (FFs) in a different accounting bucket, with
 different rules. The basic concept is that ordinary trading assets are easy
 to deposit and withdraw, and FFs have more restrictions (to protect potential
-claimants). The rules are as follows:
+claimants). The principles are as follows:
 1. Trading assets are never encumbered except in a challenge. During a
   challenge, the challengee (incumbent) may forfeit the challenge by
   withdrawing funds from the challenge (and as usual the challenger must
