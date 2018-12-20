@@ -659,21 +659,15 @@ contract Main {
     require(c.ends_at != 0,
             "Challenge invalid");
 
-    Escrow storage escrow = _lookup_escrow(base, c.incumbent, c.escrow_id);
-
     require(msg.sender == c.incumbent || msg.sender == c.challenger,
             "Not authorized");
+
+    Escrow storage escrow = _lookup_escrow(base, c.incumbent, c.escrow_id);
 
     bool slashed = escrow.state == EscrowState.Invalid;
     require(_expired(c.ends_at) || slashed);
 
-    if (!slashed) {
-      assert(escrow.beneficiary == c.challenger);
-      assert(escrow.spent_proof == itt_hash);
-    }
-
     // return funds.
-
     // JE
     //   DR
     _debit(base, c.incumbent, c.base_amount);
@@ -687,6 +681,8 @@ contract Main {
     c.dst_amount = 0; // NGM - for clarity; redundant with later delete.
 
     if (!slashed) {
+      assert(escrow.beneficiary == c.challenger);
+      assert(escrow.spent_proof == itt_hash);
       // Add additional escrow lockup to give
       // opportunity for double spend proof to be provided in the
       // case of very short lockups.
