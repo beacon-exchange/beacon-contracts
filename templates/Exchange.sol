@@ -9,6 +9,7 @@ import './ECVerify.sol';
 
 /***** Abbreviations ***
  * SV: SECURITY VULNERABILITY
+ * NROS: No Room On Stack!
  * NGM: Rely on net gas metering for sstore optimization
  * SBE: Should be marked external but ABIEncoderV2 does not allow
           calldata structs
@@ -228,6 +229,7 @@ contract Main {
     }
   }
 
+  event Deposit_(ERC20 tok, address indexed owner, uint256 amount);
   function deposit(ERC20 tok, uint256 amount)
     external
   {
@@ -239,8 +241,11 @@ contract Main {
 
     require(tok.transferFrom(msg.sender, address(this), amount),
             "Transfer failed");
+
+    emit Deposit_(tok, msg.sender, amount);
   }
 
+  event Withdraw(ERC20 tok, address indexed owner, uint256 amount);
   function withdraw(ERC20 tok, uint256 amount)
     external
   {
@@ -252,6 +257,8 @@ contract Main {
 
     require(tok.transfer(msg.sender, amount),
             "Transfer failed");
+
+    emit Withdraw(tok, msg.sender, amount);
   }
 
   function _lookup_escrow(ERC20 tok, address sender, bytes32 id)
@@ -262,7 +269,7 @@ contract Main {
     return escrows[address(tok)][sender][id];
   }
 
-
+  event DepositEscrow(ERC20 tok, address indexed sender, bytes32 id, uint256 amount);
   function deposit_forfeiture_fee(ERC20 tok, uint256 amount)
     external
     returns (bytes32 forfeiture_fee_id)
@@ -296,17 +303,19 @@ contract Main {
     // optimization opp: skip sstore and trust escrow_balance == buffer_balance
     escrow.buffer_balance = amount;
 
+    emit DepositEscrow(tok, msg.sender, id, amount);
     return id;
-    // TODO LOG
   }
 
 
+  event EscrowSlashed(ERC20 tok, address owner, bytes32 indexed id, address claimant, address prover);
   function _slash_escrow(ERC20 tok, address owner, bytes32 id, address claimant)
     private
   {
     Escrow storage escrow = _lookup_escrow(tok, owner, id);
     uint256 amount = escrow.amount;
     uint256 error_bit = amount % 2;
+    // TODO assign error bit to burn fund
     // arbitrarily assign the error bit.
     // don't really need safemath here.
     uint256 claim1_amount = amount.div(2) + error_bit;
@@ -328,8 +337,11 @@ contract Main {
     _credit(tok, BURN_FUND, amount);
 
     delete escrows[address(tok)][owner][id];
+
+    emit EscrowSlashed(tok, owner, id, escrow.beneficiary, claimant);
   }
 
+  event EscrowSpent(ERC20 tok, address owner, bytes32 indexed id, bytes32 spent_proof, address claimant); // add expiry?
   // If the escrow is already spent, slash it.
   // Returns true iff the escrow could be encumbered:
   //   1) the escrow is not expired, and
@@ -372,10 +384,14 @@ contract Main {
     escrow.beneficiary = claimant;
     escrow.spent_proof = spent_proof;
 
+    emit EscrowSpent(tok, owner, id, spent_proof, claimant);
+
     return true;
   }
 
 
+  //need tok, msg.sender, non-indexed id?
+  event InitiateEscrowWithdraw(bytes32 indexed _id);
   function initiate_escrow_withdraw(ERC20 tok, bytes32 id)
     external
   {
@@ -391,9 +407,13 @@ contract Main {
     escrow.state = EscrowState.Withdrawing;
     escrow.unencumbered_at = unencumbered_at;
     escrow.beneficiary = msg.sender;
+
+    emit InitiateEscrowWithdraw(id);
   }
 
 
+  //need tok, msg.sender, non-indexed id?
+  event FinalizeEscrowWithdraw(bytes32 indexed _id);
   function finalize_escrow_withdraw(ERC20 tok, address owner, bytes32 escrow_id)
     external
   {
@@ -428,10 +448,12 @@ contract Main {
     //delete escrow; <-- does not compile
     delete escrows[address(tok)][owner][escrow_id];
 
-    // TODO LOG
+    emit FinalizeEscrowWithdraw(escrow_id);
   }
 
 
+  // index on market?
+  event Exchange(bytes32 indexed itt_hash, ERC20 base, ERC20 dst, uint256 base_amount, uint256 dst_amount, address itt_sender, address poi_sender);
   // Passing structs via calldata fails solc with unimplemented error
   // function exchange(ITT calldata itt, POI calldata poi,...)
   // exchange(ITT memory itt,...) public
@@ -472,14 +494,14 @@ contract Main {
 
     uint256 unencumbered_at = block.timestamp + LOCKUP_PERIOD_SECONDS;
     Escrow storage escrow = _lookup_escrow(base, itt.sender, itt.forfeiture_fee_id);
-    if (escrow.state != EscrowState.OnDeposit/*can_trade*/) {
+    if (escrow.state != EscrowState.OnDeposit/*can_trade - NROS*/) {
       return false;
     }
 
     // If the escrow is double spent, will slash and return false.
     // If escrow is already challenged, will return false.
-    bool escrow_valid = _supply_escrow_spend_proof(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest);
-    assert(escrow_valid); // should follow from can_trade == true
+    // assert should follow from escrow.state == EscrowState.OnDeposit
+    assert(_supply_escrow_spend_proof(base, itt.sender, itt.forfeiture_fee_id, unencumbered_at, itt.sender, itt_digest));
 
     // JE
     //   DR
@@ -493,16 +515,24 @@ contract Main {
     //   CR
     _credit(dst, itt.sender, itt.dst_amount);
 
+    emit Exchange(itt_digest, base, dst, itt.base_amount, itt.dst_amount, itt.sender, poi.sender);
     return true;
   }
 
 
+  function _calc_challenge_expiry(uint256 challenge_period_seconds)
+    private view returns (uint256)
+  {
+    return block.timestamp.add(challenge_period_seconds);
+  }
+  event InitiateChallenge(bytes32 indexed itt_hash, ERC20 base, ERC20 dst, uint256 base_amount, uint256 dst_amount, address itt_sender, address challenger);
+  event ForfeitChallenge(bytes32 indexed itt_hash); // non-indexed hash?
   function initiate_challenge(ITT memory itt, bytes memory mkr_sig)
     public // SBE
     returns (bool success)
   {
-    address challenger = msg.sender;
-
+    // NROS!
+    // address challenger = msg.sender
     bytes32 itt_digest = ${ref_eip712HashStruct "itt" ittTy};
     require(ECVerify.ecverify(eip712encode(itt_digest), mkr_sig) == itt.sender,
            "Invalid signature");
@@ -516,7 +546,8 @@ contract Main {
     require(c.ends_at == 0,
             "ITT already challenged");
 
-    uint256 ends_at = block.timestamp.add(itt.challenge_period_seconds);
+    // NROS!
+    //uint256 ends_at = block.timestamp.add(itt.challenge_period_seconds);
 
     Deposit storage dpst = _lookup_deposit(base, itt.sender);
 
@@ -532,21 +563,20 @@ contract Main {
     // First, lock up the escrow by supplying a proof.
     // If the escrow is double spent, will slash and return false.
     // If escrow is withdrawing or challenged, will return false.
-    bool valid = _supply_escrow_spend_proof(base, itt.sender, itt.forfeiture_fee_id, ends_at, challenger, itt_digest);
-    if (!valid) {
-      return false; // don't roll back slashing
+    if (!_supply_escrow_spend_proof(base, itt.sender, itt.forfeiture_fee_id, _calc_challenge_expiry(itt.challenge_period_seconds), msg.sender, itt_digest)) {
+      return false; // don't revert slashing
     }
 
     // Initiate challenge struct
-    c.ends_at = ends_at;
+    c.ends_at = _calc_challenge_expiry(itt.challenge_period_seconds);
     c.escrow_id = itt.forfeiture_fee_id;
     c.incumbent = itt.sender; // optimization: could omit if forfeited
-    c.challenger = challenger;
+    c.challenger = msg.sender;
 
     // Always lock challenger funds.
     // JE
     //   DR
-    _debit(dst, challenger, itt.dst_amount);
+    _debit(dst, msg.sender, itt.dst_amount);
     //   CR
     c.dst_amount = itt.dst_amount;
 
@@ -564,6 +594,10 @@ contract Main {
       c.forfeited = true;
     }
 
+    emit InitiateChallenge(itt_digest, base, dst, itt.base_amount, itt.dst_amount, itt.sender, msg.sender);
+    if (!can_trade) {
+      emit ForfeitChallenge(itt_digest);
+    }
     return true;
   }
 
@@ -589,8 +623,12 @@ contract Main {
     c.base_amount = 0;
     //   CR
     _credit(base, c.incumbent, base_amount);
+
+    emit ForfeitChallenge(itt_hash);
   }
 
+
+  event AcceptChallenge(bytes32 indexed itt_hash);
   // If the challenge is still available
   //    (i.e. escrow unslashed and challenge not expired) and
   //    msg.sender is the incumbent,
@@ -642,9 +680,12 @@ contract Main {
     escrow.unencumbered_at = block.timestamp + LOCKUP_PERIOD_SECONDS;
 
     delete challenges[address(base)][address(dst)][itt_hash];
+
+    emit AcceptChallenge(itt_hash);
   }
 
 
+  event ReturnChallengeFunds(bytes32 indexed itt_hash);
   // If the challenge is unavailable,
   //   check that the challenge has expired or has been forfeited and
   //   return funds to parties.
@@ -688,5 +729,7 @@ contract Main {
     }
 
     delete challenges[address(base)][address(dst)][itt_hash];
+
+    emit ReturnChallengeFunds(itt_hash);
   }
 }
