@@ -1,6 +1,4 @@
-// PROOF OF CONCEPT!!
-// Not optimized for code size, gas, or anything really.
-// Not audited. Correctness may vary.
+// Proof of concept (not yet audited).
 pragma solidity ^0.5.1;
 pragma experimental ABIEncoderV2;
 import './SafeMath.sol';
