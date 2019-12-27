@@ -3,21 +3,19 @@
 # msg.sender that creates an ITT: originator
 # msg.sender that challenges an ITT: challenger
 
-LOCKUP_PERIOD_SECONDS: timedelta(constant) = 600 # ten minutes
+from vyper.interfaces import ERC20
 
+# This is a really big struct. Would be (much) more gas efficient to 
+# only keep its hash stored and then pass in data via calldata, checking
+# the calldata against storage.
 units: {
   base: "base currency in wei",
   quote: "quote currency in wei"
 }
 
-next_id: uint256 = 0
-
-# This is a really big struct. Would be (much) more gas efficient to 
-# only keep its hash stored and then pass in data via calldata, checking
-# the calldata against storage.
 struct ITTData:
-    base_token: ERC20
-    quote_token: ERC20
+    base_token: address
+    quote_token: address
     base_amount: uint256(base)
     quote_amount: uint256(quote)
     forfeiture_fee: uint256(base)
@@ -26,17 +24,53 @@ struct ITTData:
 struct ITT:
     originator: address
     ittdata: ITTData
+    
+struct ITTChallenge:
+    challenger: address
+    challenge_start: timestamp
 
 CreateITT: event(
-      { originator: indexed(address)
-      , base_token: indexed(ERC20)
-      , quote_token: index(ERC20)
+      { originator: address
+      , base_token: address
+      , quote_token: address
       , base_amount: uint256(base)
       , quote_amount: uint256(quote)
       , forfeiture_fee: uint256(base)
       , challenge_period_seconds: timedelta
       , itt_id: bytes32
       })
+      
+
+CancelITT: event(
+    { itt_id: bytes32
+    })
+    
+
+Challenge: event(
+    { challenger: indexed(address)
+    , itt_id: indexed(bytes32)
+    })
+
+WithdrawITTFunds: event(
+    { itt_id: indexed(bytes32)
+    })
+
+AcceptChallenge: event(
+    { itt_id: indexed(bytes32)
+    })
+
+RejectChallenge: event(
+    { itt_id: indexed(bytes32)
+    })
+    
+    
+    
+LOCKUP_PERIOD_SECONDS: timedelta # ten minutes
+
+cancel_started_at: map(bytes32, timestamp)
+
+next_id: uint256
+
 # create ITT
 # Create an ID (probably just increment self.next_id)
 # Should store the the ITT data, keyed by the ID
@@ -44,17 +78,16 @@ CreateITT: event(
 # emits: CreateITT log
 @public
 @nonreentrant('create_itt')
-def create_itt(base_token: ERC20, quote_token: ERC20, base_amount: uint256(base), quote_amount: uint256(quote), forfeiture_fee: uint256(base), challenge_period_seconds: uint256) -> bytes32 :
+def create_itt(base_token: address, quote_token: address, base_amount: uint256(base), quote_amount: uint256(quote), forfeiture_fee: uint256(base), challenge_period_seconds: uint256) -> bytes32 :
     self.next_id += 1
-    itt = ITTData(
-        { originator: msg.sender
-        , base_token: base_token
-        , quote_token: quote_token
-        , base_amount: base_amount
-        , quote_amount: quote_amount
-        , forfeiture_fee: forfeiture_fee
-        , challenge_period_seconds: challenge_period_seconds
-        })
+    itt: ITTData = ITTData({ originator: msg.sender
+          , base_token: base_token
+          , quote_token: quote_token
+          , base_amount: base_amount
+          , quote_amount: quote_amount
+          , forfeiture_fee: forfeiture_fee
+          , challenge_period_seconds: challenge_period_seconds
+          }[int128])
     # TODO ideally keccak256(abi.encode(next_id, contract_address))
     # also TODO optimize out the extra SLOAD
     itt_id = convert(self.next_id, bytes32)
@@ -64,22 +97,21 @@ def create_itt(base_token: ERC20, quote_token: ERC20, base_amount: uint256(base)
     assert_modifiable(
         base_token.transferFrom(msg.sender, self, base_amount + forfeiture_fee))
 
-    CreateITT.log(
-      { originator: itt.originator
-      , base_token: base_token
-      , quote_token: quote_token
-      , base_amount: base_amount
-      , quote_amount: quote_amount
-      , forfeiture_fee: forfeiture_fee
-      , challenge_period_seconds: challenge_period_seconds
-      , itt_id: itt_id
-      })
+    CreateITT({ 
+            originator: itt.originator
+          , base_token: base_token
+          , quote_token: quote_token
+          , base_amount: base_amount
+          , quote_amount: quote_amount
+          , forfeiture_fee: forfeiture_fee
+          , challenge_period_seconds: challenge_period_seconds
+          , itt_id: itt_id
+     })
+     
     return itt_id
 
-cancel_started_at: map(bytes32, timestamp)
-CancelITT: event(
-    { itt_id: bytes32
-    })
+
+
 # Cancel an ITT
 # If the ITT is unchallenged, start the timer for LOCKUP_PERIOD_SECONDS
 # during this time, the ITT can still be challenged. After this time,
@@ -95,14 +127,7 @@ def cancel_itt(itt_id: bytes32) :
     self.cancel_started_at[itt_id] = block.timestamp
     CancelITT.log(itt_id)
 
-struct ITTChallenge:
-    challenger: address
-    challenge_start: timestamp
 
-Challenge: event(
-    { challenger: indexed(address)
-    , itt_id: indexed(bytes32)
-    })
 # Challenge an ITT.
 # If the funds are available, and ITT is unchallenged (or currently in
 # lockup period), lock 'em up and start the challenge period.
@@ -137,9 +162,7 @@ def challenge_itt(itt_id: bytes32) :
         , itt_id: itt_id
         })
 
-WithdrawITTFunds: event(
-    { itt_id: indexed(bytes32)
-    })
+
 # If the ITT has finished lockup period, send the funds back to ITT
 # originator (and delete ITT data).
 # access: the ITT originator
@@ -158,9 +181,6 @@ def withdraw_itt_funds(itt_id: bytes32) : # after cancel period ends
 
     WithdrawITTFunds.log({itt_id: itt_id})
 
-AcceptChallenge: event(
-    { itt_id: indexed(bytes32)
-    })
 # For an ITT in a challenge period, accept the challenge:
 #   - transfer quote_token to originator
 #   - transfer base_token to challenger
@@ -187,10 +207,7 @@ def accept_challenge(itt_id: bytes32) :
     clear(self.itts[itt_id])
     clear(self.challenges[itt_id])
     AcceptChallenge.log({itt_id: itt_id})
-
-RejectChallenge: event(
-    { itt_id: indexed(bytes32)
-    })
+    
 # For an ITT in a challenge period, reject challenge and reclaim funds
 #   - transfer base_token back to originator
 #   - transfer quote_token back to challenger
@@ -200,7 +217,7 @@ RejectChallenge: event(
 # emits: RejectChallenge log
 @public
 def reject_challenge(itt_id: bytes32) :
-    orig: address = self.
+    orig: address = self
     challenger: address = self.challenges[itt_id].challenger
     challenge_len: timedelta = self.itts[itt_id].challenge_period_seconds
     challenge_start: timestamp = self.challenges[itt_id].challenge_start
@@ -217,3 +234,4 @@ def reject_challenge(itt_id: bytes32) :
     clear(self.challenges[itt_id])
 
     RejectChallenge.log({itt_id: itt_id})
+
